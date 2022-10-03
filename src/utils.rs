@@ -16,8 +16,3 @@ pub fn get_layout(mem_size: usize) -> std::alloc::Layout {
 
     Layout::from_size_align(next_pow_of_two, ALIGN).unwrap()
 }
-
-#[inline(always)]
-pub fn make_header(size: usize, color: u8, tag: u8) -> usize {
-    todo!()
-}
