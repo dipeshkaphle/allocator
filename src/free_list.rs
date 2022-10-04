@@ -1,11 +1,11 @@
 use crate::{
-    colors::CAML_BLUE,
+    colors::{CAML_BLACK, CAML_BLUE},
     header::Header,
     utils::{self, get_header_mut, get_ptr_at_offset},
     DEFAULT_COLOR, DEFAULT_TAG,
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FreeList {
     size: usize,
     start: *mut u8,
@@ -92,6 +92,7 @@ impl Iterator for FreeListIter {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct FreeListPtr {
     ptr: *mut u8,
 }
@@ -108,9 +109,9 @@ impl FreeListPtr {
     pub fn split(self, first_half_size: usize) -> (FreeListPtr, FreeListPtr) {
         let hd = self.get_header();
         let mut ptr = self.get_ptr();
-        let first_header = Header::new(first_half_size, DEFAULT_COLOR, DEFAULT_TAG);
+        let first_header = Header::new(first_half_size, hd.get_color(), DEFAULT_TAG);
         let second_header =
-            Header::new(hd.get_size() - first_half_size, DEFAULT_COLOR, DEFAULT_TAG);
+            Header::new(hd.get_size() - first_half_size, hd.get_color(), DEFAULT_TAG);
         let mut next_ptr = get_ptr_at_offset(ptr, first_half_size);
         *get_header_mut(&mut ptr) = first_header;
         *get_header_mut(&mut next_ptr) = second_header;

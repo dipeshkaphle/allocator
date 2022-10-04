@@ -4,7 +4,12 @@ mod header;
 mod memory_chunk;
 pub mod utils;
 
-use std::mem::size_of;
+use std::{mem::size_of, ptr::null_mut};
+
+use colors::CAML_BLUE;
+use header::Header;
+use memory_chunk::MemoryChunk;
+use utils::{get_header, get_header_mut};
 
 pub const DEFAULT_COLOR: colors::Color = colors::CAML_BLUE;
 pub const DEFAULT_TAG: u8 = 0;
@@ -17,32 +22,39 @@ pub const CHUNK_SIZE: usize = 256 * 1024 * 1024;
 pub extern "C" fn alloc(sz: std::ffi::c_ulonglong) -> *mut u8 {
     let header_size = size_of::<header::Header>();
     let layout = utils::get_layout(sz as usize + header_size);
-    let mem = unsafe { std::alloc::alloc(layout) };
-    let data_portion = unsafe { mem.add(header_size) };
+    let mem_chunk_ptr = unsafe { &mut *MemoryChunk::get() };
 
+    // let mem = unsafe { std::alloc::alloc(layout) };
     unsafe {
-        *(mem as *mut header::Header) = header::Header::new(layout.size(), 0, 0);
+        mem_chunk_ptr
+            .allocate(layout.size())
+            .map(|x| x.add(header_size))
+            .unwrap_or(null_mut())
     }
-    data_portion
 }
 
 #[no_mangle]
 pub extern "C" fn dealloc(ptr: *mut u8) {
     let header_size = size_of::<header::Header>();
     unsafe {
-        let mem = ptr.sub(header_size);
-        let allocation_size = *(mem as *mut header::Header);
-        std::alloc::dealloc(mem, utils::get_layout(allocation_size.get_size()));
+        let mut mem = ptr.sub(header_size);
+        let header = *get_header(&mem);
+        *get_header_mut(&mut mem) =
+            Header::new(header.get_size(), CAML_BLUE, header.get_tag() as _);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::alloc::Layout;
+
+    use crate::{alloc, dealloc};
 
     #[test]
-    fn f() {
-        println!("{:?}", Layout::new::<i128>().align());
-        println!("{:?}", crate::utils::get_layout(16).align());
+    fn tests() {
+        let alloc_mem = alloc(256 * 1024);
+        assert_ne!(alloc_mem, std::ptr::null_mut());
+        dealloc(alloc_mem);
+        //since it's first fit this should pass
+        assert_eq!(alloc(256 * 1024), alloc_mem);
     }
 }
