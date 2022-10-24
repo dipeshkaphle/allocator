@@ -2,7 +2,7 @@ mod colors;
 mod free_list;
 mod header;
 mod memory_chunk;
-pub mod utils;
+mod utils;
 
 use std::{mem::size_of, ptr::null_mut};
 
@@ -24,7 +24,6 @@ pub extern "C" fn alloc(sz: std::ffi::c_ulonglong) -> *mut u8 {
     let layout = utils::get_layout(sz as usize + header_size);
     let mem_chunk_ptr = unsafe { &mut *MemoryChunk::get() };
 
-    // let mem = unsafe { std::alloc::alloc(layout) };
     unsafe {
         mem_chunk_ptr
             .allocate(layout.size())
