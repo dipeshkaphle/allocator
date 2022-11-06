@@ -1,155 +1,215 @@
+use std::sync::Once;
+
 use crate::{
-    colors::{CAML_BLACK, CAML_BLUE},
+    colors::CAML_BLUE,
     header::Header,
-    utils::{self, get_header_mut, get_ptr_at_offset},
-    DEFAULT_COLOR, DEFAULT_TAG,
+    utils::{field, get_next, val_bp, val_field, whsize_wosize, wosize_whsize},
+    value::{Val, Value, VAL_NULL},
 };
 
-#[derive(Clone, Copy, Debug)]
-pub struct FreeList {
-    size: usize,
-    start: *mut u8,
-    cur_offset: usize,
+#[repr(C)]
+struct SentinelType {
+    filler1: Value,
+    h: Header,
+    first_field: Value,
+    filler2: Value,
 }
+
+static mut SENTINEL: SentinelType = SentinelType {
+    filler1: Value(0),
+    h: Header::new(0, CAML_BLUE, 0),
+    first_field: VAL_NULL,
+    filler2: Value(0),
+};
+
+#[derive(Debug)]
+struct NfGlobals {
+    pub cur_wsz: usize,
+    pub nf_head: Value,
+    pub nf_prev: Value,
+    pub nf_last: Value,
+}
+
+impl NfGlobals {
+    #[inline(always)]
+    pub fn get() -> &'static mut Self {
+        static mut NF_GLOBAL: NfGlobals = NfGlobals {
+            cur_wsz: 0,
+            nf_head: Value(0),
+            nf_prev: Value(0),
+            nf_last: Value(0),
+        };
+
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            unsafe {
+                NF_GLOBAL.nf_head = val_bp(std::ptr::addr_of_mut!(SENTINEL.first_field) as *mut u8);
+                NF_GLOBAL.nf_last = NF_GLOBAL.nf_head;
+                NF_GLOBAL.nf_prev = NF_GLOBAL.nf_head;
+            };
+        });
+
+        unsafe { &mut NF_GLOBAL }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FreeList {}
 
 impl FreeList {
-    pub fn iter(&self) -> FreeListIter {
-        FreeListIter::new(*self)
+    pub fn nf_iter(&mut self) -> NfIter {
+        NfIter::new(*self)
     }
-    pub fn new(size: usize, ptr: *mut u8) -> FreeList {
-        // We'll use this property to take fast mod so that we can have circular counter
-        assert!(size.is_power_of_two());
-
-        unsafe {
-            *(ptr as *mut Header) = Header::new(size, DEFAULT_COLOR, DEFAULT_TAG);
-        }
-        FreeList {
-            size,
-            start: ptr,
-            cur_offset: 0,
-        }
-        //
+    pub fn new() -> FreeList {
+        FreeList {}
     }
 
-    pub fn get_cur_ptr(&self) -> *mut u8 {
-        utils::get_ptr_at_offset(self.start, self.cur_offset)
+    fn find_next(&mut self, wo_sz: usize) -> Option<NfIterVal> {
+        self.nf_iter()
+            .find(|e| e.cur.get_header().get_size() >= wo_sz)
     }
+}
 
-    pub fn get_next_offset(&self) -> usize {
-        let header = unsafe { *(self.get_cur_ptr() as *mut Header) };
-        (self.cur_offset + header.get_size()) & (self.size - 1)
-    }
+pub struct NfIter {
+    prev: Value,
+    visited_start_once: bool,
+}
 
-    pub fn get_next_ptr(&self) -> *mut u8 {
-        utils::get_ptr_at_offset(self.start, self.get_next_offset())
-    }
-
-    pub fn find_first(&mut self, sz: usize) -> Option<*mut u8> {
-        const MIN_SIZE: usize = 16;
-        let it = self
-            .iter()
-            .find(|e| e.get_header().get_color() == CAML_BLUE && e.get_header().get_size() >= sz);
-        match it {
-            Some(ptr) => {
-                if ptr.get_header().get_size() >= (sz + MIN_SIZE) {
-                    // split
-                    let (fst, _) = ptr.split(sz);
-                    Some(fst.get_ptr())
-                } else {
-                    Some(ptr.get_ptr())
-                }
-            }
-            None => None,
+impl NfIter {
+    pub fn new(fl: FreeList) -> NfIter {
+        Self {
+            prev: NfGlobals::get().nf_prev,
+            visited_start_once: false,
         }
     }
 }
 
-pub struct FreeListIter {
-    fl: FreeList,
-    visited_start: bool,
+#[derive(Debug)]
+pub struct NfIterVal {
+    prev: Value,
+    cur: Value,
 }
 
-impl FreeListIter {
-    pub fn new(fl: FreeList) -> FreeListIter {
-        FreeListIter {
-            fl,
-            visited_start: false,
-        }
-    }
-}
-impl Iterator for FreeListIter {
-    type Item = FreeListPtr;
+impl Iterator for NfIter {
+    type Item = NfIterVal; // (prev, cur)
     fn next(&mut self) -> Option<Self::Item> {
-        let cur_ptr = self.fl.get_cur_ptr();
-        let next_offset = self.fl.get_next_offset();
-        if cur_ptr == self.fl.start && self.visited_start {
+        let mut cur = self.prev;
+        let next = *get_next(&mut cur);
+        if self.prev == NfGlobals::get().nf_prev && self.visited_start_once {
             None
         } else {
-            self.visited_start = true;
-            self.fl.cur_offset = next_offset;
-            Some(FreeListPtr::new(cur_ptr))
+            self.visited_start_once = true;
+            if next == VAL_NULL {
+                NfGlobals::get().nf_last = cur;
+                self.prev = NfGlobals::get().nf_head;
+                // cur = NfGlobals::get().nf_head;
+                // next = get_next(&mut cur);
+                return self.next();
+            }
+            self.prev = next;
+            Some(Self::Item {
+                prev: cur,
+                cur: next,
+            })
         }
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct FreeListPtr {
-    ptr: *mut u8,
+fn nf_allocate_block(mut prev: Value, mut cur: Value, wh_sz: usize) -> *mut Header {
+    // println!("prev: {:?}\ncur:{:?}", prev, cur);
+
+    let hd_sz = cur.get_header().get_size();
+    if cur.get_header().get_size() < (wh_sz + 1) {
+        NfGlobals::get().cur_wsz -= whsize_wosize(cur.get_header().get_size());
+        *get_next(&mut prev) = *get_next(&mut cur);
+        *cur.get_header() = Header::new(0, CAML_BLUE, 0);
+    } else {
+        NfGlobals::get().cur_wsz -= wh_sz;
+        *cur.get_header() = Header::new(cur.get_header().get_size() - wh_sz, CAML_BLUE, 0);
+    }
+    let offset = hd_sz as isize - wh_sz as isize;
+
+    // Set the header for the memory that we'll be returning
+    *val_field(cur, offset + 1).get_header() = Header::new(wosize_whsize(wh_sz), CAML_BLUE, 0);
+
+    NfGlobals::get().nf_prev = prev;
+
+    // println!("prev: {:?}\ncur:{:?}", prev, cur);
+
+    (val_field(cur, offset).0 as *mut usize) as *mut Header
 }
-impl FreeListPtr {
-    pub fn new(ptr: *mut u8) -> FreeListPtr {
-        FreeListPtr { ptr }
+
+pub fn nf_allocate(wo_sz: usize) -> *mut Header {
+    assert!(wo_sz >= 1);
+    let it = FreeList::new().find_next(wo_sz);
+    match it {
+        None => VAL_NULL.0 as *mut Header,
+        Some(it) => nf_allocate_block(it.prev, it.cur, whsize_wosize(wo_sz)),
     }
-    pub fn get_header(&self) -> Header {
-        *utils::get_header(&self.ptr)
-    }
-    pub fn get_ptr(self) -> *mut u8 {
-        self.ptr
-    }
-    pub fn split(self, first_half_size: usize) -> (FreeListPtr, FreeListPtr) {
-        let hd = self.get_header();
-        let mut ptr = self.get_ptr();
-        let first_header = Header::new(first_half_size, hd.get_color(), DEFAULT_TAG);
-        let second_header =
-            Header::new(hd.get_size() - first_half_size, hd.get_color(), DEFAULT_TAG);
-        let mut next_ptr = get_ptr_at_offset(ptr, first_half_size);
-        *get_header_mut(&mut ptr) = first_header;
-        *get_header_mut(&mut next_ptr) = second_header;
-        (FreeListPtr::new(ptr), FreeListPtr::new(next_ptr))
+}
+
+fn nf_add_block(mut val: Value) {
+    let it = FreeList::new().nf_iter().find(|e| e.cur > val);
+    NfGlobals::get().cur_wsz += whsize_wosize(val.get_header().get_size());
+    match it {
+        None => {
+            // means its the last most address
+            *get_next(&mut NfGlobals::get().nf_last) = val;
+            NfGlobals::get().nf_last = val;
+        }
+        Some(mut it) => {
+            *get_next(&mut val) = it.cur;
+            *get_next(&mut it.prev) = val;
+        }
     }
 }
 
 #[cfg(test)]
 mod freelist_tests {
-    use crate::utils;
-
-    use super::FreeList;
+    use crate::{
+        colors::CAML_BLUE,
+        free_list::{nf_add_block, nf_allocate, FreeList, NfGlobals},
+        header::Header,
+        utils::{self, field, get_header_mut, val_field, WORD_SIZE},
+        value::{Val, Value},
+    };
 
     #[test]
     fn test() {
         let size = 1024;
-        let layout = utils::get_layout(size);
-        let mem = unsafe { std::alloc::alloc(layout) };
-        let mut free_list = FreeList::new(size, mem);
-        assert_eq!(free_list.get_next_offset(), 0);
-        assert_eq!(free_list.get_next_ptr(), mem);
-        assert_eq!(free_list.get_cur_ptr(), mem);
+        let layout = utils::get_layout(size * WORD_SIZE);
+        let mut mem_hd = unsafe { std::alloc::alloc(layout) };
+        let mem_hd_val = Value(mem_hd as usize);
 
-        assert_eq!(free_list.iter().count(), 1);
+        assert_ne!(mem_hd, std::ptr::null_mut());
+        *get_header_mut(&mut mem_hd) = Header::new(size - 1, CAML_BLUE, 0);
+
+        assert_eq!(FreeList::new().nf_iter().count(), 0);
+
+        nf_add_block(val_field(mem_hd_val, 1));
+
+        assert_eq!(FreeList::new().nf_iter().count(), 1);
+
         assert_eq!(
-            free_list.iter().next().unwrap().get_header().get_size(),
-            1024
+            FreeList::new()
+                .nf_iter()
+                .next()
+                .unwrap()
+                .cur
+                .get_header()
+                .get_size(),
+            size - 1
         );
 
-        // would have caused a split
-        let ptr = free_list.find_first(16);
-        assert_eq!(utils::get_header(&ptr.unwrap()).get_size(), 16);
+        // should cause a split
+        let small_sz = 16;
+        let ptr = nf_allocate(small_sz);
+        assert_eq!(unsafe { (*ptr).get_size() }, small_sz);
 
-        // split made it 2
-        assert_eq!(free_list.iter().count(), 2);
-
-        // wont cause split as remaining wont be more than MIN_SIZE
-        let _ = free_list.find_first(1008);
-        assert_eq!(free_list.iter().count(), 2);
+        let rem_size = size - 1 - (small_sz + 1);
+        assert_eq!(
+            unsafe { (*nf_allocate(size - 1 - (small_sz + 1))).get_size() },
+            rem_size
+        );
     }
 }

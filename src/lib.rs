@@ -1,14 +1,14 @@
 mod colors;
 mod free_list;
 mod header;
-mod memory_chunk;
+// mod memory_chunk;
 mod utils;
+mod value;
 
 use std::{mem::size_of, ptr::null_mut};
 
 use colors::CAML_BLUE;
 use header::Header;
-use memory_chunk::MemoryChunk;
 use utils::{get_header, get_header_mut};
 
 pub const DEFAULT_COLOR: colors::Color = colors::CAML_BLUE;
@@ -20,16 +20,18 @@ pub const CHUNK_SIZE: usize = 256 * 1024 * 1024;
 
 #[no_mangle]
 pub extern "C" fn alloc(sz: std::ffi::c_ulonglong) -> *mut u8 {
-    let header_size = size_of::<header::Header>();
-    let layout = utils::get_layout(sz as usize + header_size);
-    let mem_chunk_ptr = unsafe { &mut *MemoryChunk::get() };
+    // FreeList::new().find_first()
+    todo!()
+    // let header_size = size_of::<header::Header>();
+    // let layout = utils::get_layout(sz as usize + header_size);
+    // let mem_chunk_ptr = unsafe { &mut *MemoryChunk::get() };
 
-    unsafe {
-        mem_chunk_ptr
-            .allocate(layout.size())
-            .map(|x| x.add(header_size))
-            .unwrap_or(null_mut())
-    }
+    // unsafe {
+    // mem_chunk_ptr
+    // .allocate(layout.size())
+    // .map(|x| x.add(header_size))
+    // .unwrap_or(null_mut())
+    // }
 }
 
 #[no_mangle]
@@ -37,7 +39,7 @@ pub extern "C" fn dealloc(ptr: *mut u8) {
     let header_size = size_of::<header::Header>();
     unsafe {
         let mut mem = ptr.sub(header_size);
-        let header = *get_header(&mem);
+        let header = get_header(&mem).clone();
         *get_header_mut(&mut mem) =
             Header::new(header.get_size(), CAML_BLUE, header.get_tag() as _);
     }

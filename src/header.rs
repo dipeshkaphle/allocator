@@ -1,11 +1,13 @@
+use std::fmt::{self, Debug, Display};
+
 use crate::colors::Color;
 
 #[repr(transparent)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Header(usize);
 
 impl Header {
-    pub fn new(size: usize, color: Color, tag: u8) -> Header {
+    pub const fn new(size: usize, color: Color, tag: u8) -> Header {
         Header((size << 10) + color + (tag as usize))
     }
     pub fn get_tag(&self) -> usize {
@@ -16,6 +18,16 @@ impl Header {
     }
     pub fn get_size(&self) -> usize {
         self.0 >> 10
+    }
+}
+
+impl Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Header")
+            .field("size", &self.get_size())
+            .field("color", &self.get_color())
+            .field("tag", &self.get_tag())
+            .finish()
     }
 }
 
