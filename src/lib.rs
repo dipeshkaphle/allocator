@@ -35,20 +35,32 @@ pub extern "C" fn dealloc(ptr: *mut u8) {
 #[cfg(test)]
 mod tests {
 
-    use crate::{
-        alloc, dealloc,
-        free_list::{traverse_fl, FreeList},
-    };
+    use crate::{alloc, dealloc, free_list::FreeList, utils::whsize_wosize, value::Val};
 
     #[test]
     fn tests() {
-        let alloc_mem = alloc(1024 * 8);
+        let req: usize = 1024 * 8;
+        let alloc_mem = alloc(req as u64);
         assert_ne!(alloc_mem, std::ptr::null_mut());
         // traverse_fl(|v| println!("{:?}", v));
         assert_eq!(FreeList::new().nf_iter().count(), 1);
 
+        let total_sz: usize = FreeList::new()
+            .nf_iter()
+            .map(|v| whsize_wosize(v.cur.get_header().get_size()))
+            .sum();
+
         dealloc(alloc_mem);
         assert_eq!(FreeList::new().nf_iter().count(), 2);
+
+        assert_eq!(
+            FreeList::new()
+                .nf_iter()
+                .map(|v| whsize_wosize(v.cur.get_header().get_size()))
+                .sum::<usize>(),
+            total_sz + req + 1
+        );
+
         // traverse_fl(|v| println!("{:?}", v));
         // //since it's first fit this should pass
         // assert_eq!(alloc(256 * 1024), alloc_mem);

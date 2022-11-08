@@ -88,8 +88,8 @@ impl NfIter {
 
 #[derive(Debug)]
 pub struct NfIterVal {
-    prev: Value,
-    cur: Value,
+    pub prev: Value,
+    pub cur: Value,
 }
 
 impl Iterator for NfIter {
