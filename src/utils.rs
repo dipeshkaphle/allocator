@@ -43,7 +43,7 @@ pub fn get_header_mut(ptr: &mut *mut u8) -> &mut Header {
 }
 
 #[inline(always)]
-pub fn get_next(cur: &mut Value) -> &mut Value {
+pub fn get_next(cur: &Value) -> &mut Value {
     field(cur, 0)
 }
 
@@ -81,7 +81,7 @@ macro_rules! hp_val {
 }
 
 #[inline(always)]
-pub fn field(val: &mut Value, index: isize) -> &mut Value {
+pub fn field(val: &Value, index: isize) -> &mut Value {
     let val_as_mut_value = val.0 as *mut Value;
 
     let offs = unsafe { val_as_mut_value.offset(index) };

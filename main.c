@@ -8,6 +8,9 @@ extern void dealloc(char *);
 
 int main() {
   char *m = alloc(8 * 1024 * 1024);
+  if (m == NULL) {
+    perror("NULL memory, alloc failed");
+  }
 
   /* char *m = alloc(300 * 1024 * 1024); */
   /* assert(m == NULL); */
@@ -27,7 +30,7 @@ int main() {
     write(1, s, strlen(s));
   }
 
-#ifndef LEAK
-  dealloc(m);
-#endif
+  /* #ifndef LEAK */
+  /* dealloc(m); */
+  /* #endif */
 }

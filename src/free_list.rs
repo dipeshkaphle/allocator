@@ -3,7 +3,9 @@ use std::sync::Once;
 use crate::{
     colors::CAML_BLUE,
     header::Header,
-    utils::{field, get_next, val_bp, val_field, whsize_wosize, wosize_whsize},
+    utils::{
+        self, get_header_mut, get_next, val_bp, val_field, whsize_wosize, wosize_whsize, WORD_SIZE,
+    },
     value::{Val, Value, VAL_NULL},
 };
 
@@ -76,7 +78,7 @@ pub struct NfIter {
 }
 
 impl NfIter {
-    pub fn new(fl: FreeList) -> NfIter {
+    pub fn new(_fl: FreeList) -> NfIter {
         Self {
             prev: NfGlobals::get().nf_prev,
             visited_start_once: false,
@@ -93,8 +95,8 @@ pub struct NfIterVal {
 impl Iterator for NfIter {
     type Item = NfIterVal; // (prev, cur)
     fn next(&mut self) -> Option<Self::Item> {
-        let mut cur = self.prev;
-        let next = *get_next(&mut cur);
+        let cur = self.prev;
+        let next = *get_next(&cur);
         if self.prev == NfGlobals::get().nf_prev && self.visited_start_once {
             None
         } else {
@@ -115,26 +117,39 @@ impl Iterator for NfIter {
     }
 }
 
-fn nf_allocate_block(mut prev: Value, mut cur: Value, wh_sz: usize) -> *mut Header {
-    // println!("prev: {:?}\ncur:{:?}", prev, cur);
+fn nf_allocate_block(prev: Value, cur: Value, wh_sz: usize) -> *mut Header {
+    if cfg!(debug_assertions) {
+        println!("prev: {:?}\ncur:{:?}", prev, cur);
+    }
 
     let hd_sz = cur.get_header().get_size();
     if cur.get_header().get_size() < (wh_sz + 1) {
         NfGlobals::get().cur_wsz -= whsize_wosize(cur.get_header().get_size());
-        *get_next(&mut prev) = *get_next(&mut cur);
+        *get_next(&prev) = *get_next(&cur);
         *cur.get_header() = Header::new(0, CAML_BLUE, 0);
     } else {
         NfGlobals::get().cur_wsz -= wh_sz;
         *cur.get_header() = Header::new(cur.get_header().get_size() - wh_sz, CAML_BLUE, 0);
     }
+    if cfg!(debug_assertions) {
+        println!("{:?}", cur);
+    }
+
     let offset = hd_sz as isize - wh_sz as isize;
 
     // Set the header for the memory that we'll be returning
-    *val_field(cur, offset + 1).get_header() = Header::new(wosize_whsize(wh_sz), CAML_BLUE, 0);
+    let vf = val_field(cur, offset + 1);
+    *vf.get_header() = Header::new(wosize_whsize(wh_sz), CAML_BLUE, 0);
+
+    if cfg!(debug_assertions) {
+        println!("HERE");
+    }
 
     NfGlobals::get().nf_prev = prev;
 
-    // println!("prev: {:?}\ncur:{:?}", prev, cur);
+    if cfg!(debug_assertions) {
+        println!("prev: {:?}\ncur:{:?}", prev, cur);
+    }
 
     (val_field(cur, offset).0 as *mut usize) as *mut Header
 }
@@ -148,34 +163,74 @@ pub fn nf_allocate(wo_sz: usize) -> *mut Header {
     }
 }
 
-fn nf_add_block(mut val: Value) {
+pub fn nf_expand_heap(mut request_wo_sz: usize) {
+    // We'll just allocate twice as much as the request, if request >= 1MB, else 1MB
+    const MIN_WOSZ_EXPAND: usize = 1024 * 1024;
+    if request_wo_sz >= MIN_WOSZ_EXPAND {
+        request_wo_sz <<= 1;
+    } else {
+        request_wo_sz = MIN_WOSZ_EXPAND;
+    }
+
+    // alloc expects the request in bytes
+    let layout = utils::get_layout(request_wo_sz * WORD_SIZE);
+
+    if cfg!(debug_assertions) {
+        println!("{:?}", layout);
+    }
+
+    // Assuming this'll never fail
+    let mut mem_hd = unsafe { std::alloc::alloc_zeroed(layout) };
+    let mem_hd_val = Value(mem_hd as usize);
+    assert_ne!(mem_hd, std::ptr::null_mut());
+    *get_header_mut(&mut mem_hd) = Header::new((layout.size() >> 3) - 1, CAML_BLUE, 0);
+
+    if cfg!(debug_assertions) {
+        println!("{:?}", val_field(mem_hd_val, 1));
+    }
+    nf_add_block(val_field(mem_hd_val, 1));
+}
+
+fn nf_add_block(val: Value) {
     let it = FreeList::new().nf_iter().find(|e| e.cur > val);
     NfGlobals::get().cur_wsz += whsize_wosize(val.get_header().get_size());
     match it {
         None => {
             // means its the last most address
-            *get_next(&mut NfGlobals::get().nf_last) = val;
+            *get_next(&NfGlobals::get().nf_last) = val;
             NfGlobals::get().nf_last = val;
+            *get_next(&NfGlobals::get().nf_last) = VAL_NULL;
         }
-        Some(mut it) => {
-            *get_next(&mut val) = it.cur;
-            *get_next(&mut it.prev) = val;
+        Some(it) => {
+            *get_next(&val) = it.cur;
+            *get_next(&it.prev) = val;
         }
     }
+}
+
+pub fn traverse_fl<F>(f: F)
+where
+    F: Fn(Value),
+{
+    println!("===============");
+    FreeList::new().nf_iter().for_each(|v| f(v.cur));
+    println!("===============");
 }
 
 #[cfg(test)]
 mod freelist_tests {
     use crate::{
         colors::CAML_BLUE,
-        free_list::{nf_add_block, nf_allocate, FreeList, NfGlobals},
+        free_list::{nf_add_block, nf_allocate, FreeList, NfGlobals, VAL_NULL},
         header::Header,
-        utils::{self, field, get_header_mut, val_field, WORD_SIZE},
+        utils::{self, get_header_mut, get_next, val_field, WORD_SIZE},
         value::{Val, Value},
     };
 
     #[test]
     fn test() {
+        assert_eq!(*get_next(&NfGlobals::get().nf_last), VAL_NULL);
+
         let size = 1024;
         let layout = utils::get_layout(size * WORD_SIZE);
         let mut mem_hd = unsafe { std::alloc::alloc(layout) };
@@ -189,6 +244,7 @@ mod freelist_tests {
         nf_add_block(val_field(mem_hd_val, 1));
 
         assert_eq!(FreeList::new().nf_iter().count(), 1);
+        assert_eq!(*get_next(&NfGlobals::get().nf_last), VAL_NULL);
 
         assert_eq!(
             FreeList::new()
