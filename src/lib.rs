@@ -2,19 +2,12 @@
 mod colors;
 mod free_list;
 mod header;
-// mod memory_chunk;
 mod utils;
 mod value;
 
-use std::mem::size_of;
-
-use colors::CAML_BLUE;
-use free_list::{nf_allocate, nf_expand_heap, FreeList};
-use header::Header;
-use utils::{get_header, get_header_mut, val_field};
+use free_list::{nf_allocate, nf_deallocate, nf_expand_heap, FreeList};
+use utils::val_field;
 use value::{Value, VAL_NULL};
-
-use crate::free_list::traverse_fl;
 
 pub const DEFAULT_COLOR: colors::Color = colors::CAML_BLUE;
 pub const DEFAULT_TAG: u8 = 0;
@@ -27,9 +20,6 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
         let prev_cnt = FreeList::new().nf_iter().count();
         nf_expand_heap(wo_sz as usize);
         assert_eq!(FreeList::new().nf_iter().count(), prev_cnt + 1);
-        if cfg!(debug_assertions) {
-            traverse_fl(|v| println!("{:?}", v));
-        }
         mem = nf_allocate(wo_sz as usize);
     }
     val_field(Value(mem as usize), 1).0 as *mut u8
@@ -37,25 +27,29 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
 
 #[no_mangle]
 pub extern "C" fn dealloc(ptr: *mut u8) {
-    let header_size = size_of::<header::Header>();
-    unsafe {
-        let mut mem = ptr.sub(header_size);
-        let header = get_header(&mem).clone();
-        *get_header_mut(&mut mem) =
-            Header::new(header.get_size(), CAML_BLUE, header.get_tag() as _);
-    }
+    let val_ptr = Value(ptr as usize);
+
+    nf_deallocate(val_ptr);
 }
 
 #[cfg(test)]
 mod tests {
 
-    use crate::alloc;
+    use crate::{
+        alloc, dealloc,
+        free_list::{traverse_fl, FreeList},
+    };
 
     #[test]
     fn tests() {
-        let alloc_mem = alloc(1024 * 1024);
+        let alloc_mem = alloc(1024 * 8);
         assert_ne!(alloc_mem, std::ptr::null_mut());
-        // dealloc(alloc_mem);
+        // traverse_fl(|v| println!("{:?}", v));
+        assert_eq!(FreeList::new().nf_iter().count(), 1);
+
+        dealloc(alloc_mem);
+        assert_eq!(FreeList::new().nf_iter().count(), 2);
+        // traverse_fl(|v| println!("{:?}", v));
         // //since it's first fit this should pass
         // assert_eq!(alloc(256 * 1024), alloc_mem);
     }

@@ -119,7 +119,7 @@ impl Iterator for NfIter {
 
 fn nf_allocate_block(prev: Value, cur: Value, wh_sz: usize) -> *mut Header {
     if cfg!(debug_assertions) {
-        println!("prev: {:?}\ncur:{:?}", prev, cur);
+        println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
     }
 
     let hd_sz = cur.get_header().get_size();
@@ -132,7 +132,7 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: usize) -> *mut Header {
         *cur.get_header() = Header::new(cur.get_header().get_size() - wh_sz, CAML_BLUE, 0);
     }
     if cfg!(debug_assertions) {
-        println!("{:?}", cur);
+        println!("[nf_allocate_block] {:?}", cur);
     }
 
     let offset = hd_sz as isize - wh_sz as isize;
@@ -141,14 +141,10 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: usize) -> *mut Header {
     let vf = val_field(cur, offset + 1);
     *vf.get_header() = Header::new(wosize_whsize(wh_sz), CAML_BLUE, 0);
 
-    if cfg!(debug_assertions) {
-        println!("HERE");
-    }
-
     NfGlobals::get().nf_prev = prev;
 
     if cfg!(debug_assertions) {
-        println!("prev: {:?}\ncur:{:?}", prev, cur);
+        println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
     }
 
     (val_field(cur, offset).0 as *mut usize) as *mut Header
@@ -175,10 +171,6 @@ pub fn nf_expand_heap(mut request_wo_sz: usize) {
     // alloc expects the request in bytes
     let layout = utils::get_layout(request_wo_sz * WORD_SIZE);
 
-    if cfg!(debug_assertions) {
-        println!("{:?}", layout);
-    }
-
     // Assuming this'll never fail
     let mut mem_hd = unsafe { std::alloc::alloc_zeroed(layout) };
     let mem_hd_val = Value(mem_hd as usize);
@@ -186,7 +178,7 @@ pub fn nf_expand_heap(mut request_wo_sz: usize) {
     *get_header_mut(&mut mem_hd) = Header::new((layout.size() >> 3) - 1, CAML_BLUE, 0);
 
     if cfg!(debug_assertions) {
-        println!("{:?}", val_field(mem_hd_val, 1));
+        println!("[nf_expand_heap]{:?}", val_field(mem_hd_val, 1));
     }
     nf_add_block(val_field(mem_hd_val, 1));
 }
@@ -208,13 +200,38 @@ fn nf_add_block(val: Value) {
     }
 }
 
+fn try_merge(prev: Value, cur: Value) {
+    // no-op right now
+}
+
+pub fn nf_deallocate(val: Value) {
+    NfGlobals::get().cur_wsz += whsize_wosize(val.get_header().get_size());
+    if val > NfGlobals::get().nf_last {
+        let prev = NfGlobals::get().nf_last;
+        *get_next(&NfGlobals::get().nf_last) = val;
+        NfGlobals::get().nf_last = val;
+        *get_next(&NfGlobals::get().nf_last) = VAL_NULL;
+        try_merge(prev, val);
+        return;
+    }
+
+    let it = FreeList::new()
+        .nf_iter()
+        .find(|it| it.cur > val && it.prev < val)
+        .unwrap();
+    *get_next(&val) = it.cur;
+    *get_next(&it.prev) = val;
+    try_merge(val, it.cur);
+    try_merge(it.prev, val);
+}
+
 pub fn traverse_fl<F>(f: F)
 where
     F: Fn(Value),
 {
-    println!("===============");
+    println!("======Traversing FreeList=========");
     FreeList::new().nf_iter().for_each(|v| f(v.cur));
-    println!("===============");
+    println!("====================================");
 }
 
 #[cfg(test)]
