@@ -1,6 +1,6 @@
 use std::alloc::Layout;
 
-use crate::{header::Header, value::Value};
+use crate::{header::Header, value::Value, word::Wsize};
 
 #[cfg(target_pointer_width = "16")]
 static ALIGN: usize = 2usize;
@@ -20,16 +20,20 @@ pub const WORD_SIZE: usize = 4usize;
 #[cfg(target_pointer_width = "64")]
 pub const WORD_SIZE: usize = 8usize;
 
+#[cfg(target_pointer_width = "16")]
+pub const SHIFT: usize = 1;
+
+#[cfg(target_pointer_width = "32")]
+pub const SHIFT: usize = 2;
+
+#[cfg(target_pointer_width = "64")]
+pub const SHIFT: usize = 3;
+
 #[inline(always)]
-pub fn get_layout(mem_size: usize) -> std::alloc::Layout {
-    let next_pow_of_two = mem_size.next_power_of_two();
+pub fn get_layout(mem_size: Wsize) -> std::alloc::Layout {
+    let next_pow_of_two = mem_size.to_bytesize().next_power_of_two();
 
     Layout::from_size_align(next_pow_of_two, ALIGN).unwrap()
-}
-
-#[inline(always)]
-pub fn get_ptr_at_offset(start: *mut u8, offset: usize) -> *mut u8 {
-    unsafe { start.add(offset) }
 }
 
 #[inline(always)]
@@ -48,12 +52,12 @@ pub fn get_next(cur: &Value) -> &mut Value {
 }
 
 #[inline(always)]
-pub fn whsize_wosize(wsz: usize) -> usize {
-    wsz + 1
+pub fn whsize_wosize(wsz: Wsize) -> Wsize {
+    Wsize::new(wsz.get_val() + 1)
 }
 #[inline(always)]
-pub fn wosize_whsize(wsz: usize) -> usize {
-    wsz - 1
+pub fn wosize_whsize(wsz: Wsize) -> Wsize {
+    Wsize::new(wsz.get_val() - 1)
 }
 
 #[macro_export]

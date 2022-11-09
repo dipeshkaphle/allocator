@@ -4,23 +4,25 @@ mod free_list;
 mod header;
 mod utils;
 mod value;
+mod word;
 
 use free_list::{nf_allocate, nf_deallocate, nf_expand_heap, FreeList};
 use utils::val_field;
 use value::{Value, VAL_NULL};
+use word::Wsize;
 
 pub const DEFAULT_COLOR: colors::Color = colors::CAML_BLUE;
 pub const DEFAULT_TAG: u8 = 0;
 
 #[no_mangle]
 pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
-    let mut mem = nf_allocate(wo_sz as usize);
+    let mut mem = nf_allocate(Wsize::new(wo_sz as usize));
     if Value(mem as usize) == VAL_NULL {
         // add new block and allocate
         let prev_cnt = FreeList::new().nf_iter().count();
-        nf_expand_heap(wo_sz as usize);
+        nf_expand_heap(Wsize::new(wo_sz as usize));
         assert_eq!(FreeList::new().nf_iter().count(), prev_cnt + 1);
-        mem = nf_allocate(wo_sz as usize);
+        mem = nf_allocate(Wsize::new(wo_sz as usize));
     }
     val_field(Value(mem as usize), 1).0 as *mut u8
 }
@@ -35,7 +37,9 @@ pub extern "C" fn dealloc(ptr: *mut u8) {
 #[cfg(test)]
 mod tests {
 
-    use crate::{alloc, dealloc, free_list::FreeList, utils::whsize_wosize, value::Val};
+    use crate::{
+        alloc, dealloc, free_list::FreeList, utils::whsize_wosize, value::Val, word::Wsize,
+    };
 
     #[test]
     fn tests() {
@@ -47,7 +51,7 @@ mod tests {
 
         let total_sz: usize = FreeList::new()
             .nf_iter()
-            .map(|v| whsize_wosize(v.cur.get_header().get_size()))
+            .map(|v| *whsize_wosize(Wsize::new(v.cur.get_header().get_size())).get_val())
             .sum();
 
         dealloc(alloc_mem);
@@ -56,7 +60,7 @@ mod tests {
         assert_eq!(
             FreeList::new()
                 .nf_iter()
-                .map(|v| whsize_wosize(v.cur.get_header().get_size()))
+                .map(|v| *whsize_wosize(Wsize::new(v.cur.get_header().get_size())).get_val())
                 .sum::<usize>(),
             total_sz + req + 1
         );

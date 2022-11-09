@@ -3,10 +3,9 @@ use std::sync::Once;
 use crate::{
     colors::CAML_BLUE,
     header::Header,
-    utils::{
-        self, get_header_mut, get_next, val_bp, val_field, whsize_wosize, wosize_whsize, WORD_SIZE,
-    },
+    utils::{self, get_header_mut, get_next, val_bp, val_field, whsize_wosize, wosize_whsize},
     value::{Val, Value, VAL_NULL},
+    word::Wsize,
 };
 
 #[repr(C)]
@@ -26,7 +25,7 @@ static mut SENTINEL: SentinelType = SentinelType {
 
 #[derive(Debug)]
 struct NfGlobals {
-    pub cur_wsz: usize,
+    pub cur_wsz: Wsize,
     pub nf_head: Value,
     pub nf_prev: Value,
     pub nf_last: Value,
@@ -36,7 +35,7 @@ impl NfGlobals {
     #[inline(always)]
     pub fn get() -> &'static mut Self {
         static mut NF_GLOBAL: NfGlobals = NfGlobals {
-            cur_wsz: 0,
+            cur_wsz: Wsize::new(0),
             nf_head: Value(0),
             nf_prev: Value(0),
             nf_last: Value(0),
@@ -66,9 +65,9 @@ impl FreeList {
         FreeList {}
     }
 
-    fn find_next(&mut self, wo_sz: usize) -> Option<NfIterVal> {
+    fn find_next(&mut self, wo_sz: Wsize) -> Option<NfIterVal> {
         self.nf_iter()
-            .find(|e| e.cur.get_header().get_size() >= wo_sz)
+            .find(|e| e.cur.get_header().get_size() >= *wo_sz.get_val())
     }
 }
 
@@ -117,29 +116,31 @@ impl Iterator for NfIter {
     }
 }
 
-fn nf_allocate_block(prev: Value, cur: Value, wh_sz: usize) -> *mut Header {
+fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
     if cfg!(debug_assertions) {
         println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
     }
 
-    let hd_sz = cur.get_header().get_size();
-    if cur.get_header().get_size() < (wh_sz + 1) {
-        NfGlobals::get().cur_wsz -= whsize_wosize(cur.get_header().get_size());
+    let hd_sz = Wsize::new(cur.get_header().get_size());
+    if cur.get_header().get_size() < (wh_sz.get_val() + 1) {
+        *NfGlobals::get().cur_wsz.get_val_mut() -=
+            whsize_wosize(Wsize::new(cur.get_header().get_size())).get_val();
         *get_next(&prev) = *get_next(&cur);
         *cur.get_header() = Header::new(0, CAML_BLUE, 0);
     } else {
-        NfGlobals::get().cur_wsz -= wh_sz;
-        *cur.get_header() = Header::new(cur.get_header().get_size() - wh_sz, CAML_BLUE, 0);
+        *NfGlobals::get().cur_wsz.get_val_mut() -= wh_sz.get_val();
+        *cur.get_header() =
+            Header::new(cur.get_header().get_size() - wh_sz.get_val(), CAML_BLUE, 0);
     }
     if cfg!(debug_assertions) {
         println!("[nf_allocate_block] {:?}", cur);
     }
 
-    let offset = hd_sz as isize - wh_sz as isize;
+    let offset = *hd_sz.get_val() as isize - *wh_sz.get_val() as isize;
 
     // Set the header for the memory that we'll be returning
     let vf = val_field(cur, offset + 1);
-    *vf.get_header() = Header::new(wosize_whsize(wh_sz), CAML_BLUE, 0);
+    *vf.get_header() = Header::new(*wosize_whsize(wh_sz).get_val(), CAML_BLUE, 0);
 
     NfGlobals::get().nf_prev = prev;
 
@@ -150,8 +151,8 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: usize) -> *mut Header {
     (val_field(cur, offset).0 as *mut usize) as *mut Header
 }
 
-pub fn nf_allocate(wo_sz: usize) -> *mut Header {
-    assert!(wo_sz >= 1);
+pub fn nf_allocate(wo_sz: Wsize) -> *mut Header {
+    assert!(*wo_sz.get_val() >= 1);
     let it = FreeList::new().find_next(wo_sz);
     match it {
         None => VAL_NULL.0 as *mut Header,
@@ -159,23 +160,27 @@ pub fn nf_allocate(wo_sz: usize) -> *mut Header {
     }
 }
 
-pub fn nf_expand_heap(mut request_wo_sz: usize) {
+pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
     // We'll just allocate twice as much as the request, if request >= 1MB, else 1MB
-    const MIN_WOSZ_EXPAND: usize = 1024 * 1024;
+    const MIN_WOSZ_EXPAND: Wsize = Wsize::new(1024 * 1024);
     if request_wo_sz >= MIN_WOSZ_EXPAND {
-        request_wo_sz <<= 1;
+        *request_wo_sz.get_val_mut() <<= 1;
     } else {
         request_wo_sz = MIN_WOSZ_EXPAND;
     }
 
     // alloc expects the request in bytes
-    let layout = utils::get_layout(request_wo_sz * WORD_SIZE);
+    let layout = utils::get_layout(request_wo_sz);
 
     // Assuming this'll never fail
     let mut mem_hd = unsafe { std::alloc::alloc_zeroed(layout) };
     let mem_hd_val = Value(mem_hd as usize);
     assert_ne!(mem_hd, std::ptr::null_mut());
-    *get_header_mut(&mut mem_hd) = Header::new((layout.size() >> 3) - 1, CAML_BLUE, 0);
+    *get_header_mut(&mut mem_hd) = Header::new(
+        Wsize::from_bytesize(layout.size()).get_val() - 1,
+        CAML_BLUE,
+        0,
+    );
 
     if cfg!(debug_assertions) {
         println!("[nf_expand_heap]{:?}", val_field(mem_hd_val, 1));
@@ -185,7 +190,8 @@ pub fn nf_expand_heap(mut request_wo_sz: usize) {
 
 fn nf_add_block(val: Value) {
     let it = FreeList::new().nf_iter().find(|e| e.cur > val);
-    NfGlobals::get().cur_wsz += whsize_wosize(val.get_header().get_size());
+    *NfGlobals::get().cur_wsz.get_val_mut() +=
+        whsize_wosize(Wsize::new(val.get_header().get_size())).get_val();
     match it {
         None => {
             // means its the last most address
@@ -205,7 +211,8 @@ fn try_merge(prev: Value, cur: Value) {
 }
 
 pub fn nf_deallocate(val: Value) {
-    NfGlobals::get().cur_wsz += whsize_wosize(val.get_header().get_size());
+    *NfGlobals::get().cur_wsz.get_val_mut() +=
+        whsize_wosize(Wsize::new(val.get_header().get_size())).get_val();
     if val > NfGlobals::get().nf_last {
         let prev = NfGlobals::get().nf_last;
         *get_next(&NfGlobals::get().nf_last) = val;
@@ -240,8 +247,9 @@ mod freelist_tests {
         colors::CAML_BLUE,
         free_list::{nf_add_block, nf_allocate, FreeList, NfGlobals, VAL_NULL},
         header::Header,
-        utils::{self, get_header_mut, get_next, val_field, WORD_SIZE},
+        utils::{self, get_header_mut, get_next, val_field},
         value::{Val, Value},
+        word::Wsize,
     };
 
     #[test]
@@ -249,7 +257,7 @@ mod freelist_tests {
         assert_eq!(*get_next(&NfGlobals::get().nf_last), VAL_NULL);
 
         let size = 1024;
-        let layout = utils::get_layout(size * WORD_SIZE);
+        let layout = utils::get_layout(Wsize::new(size));
         let mut mem_hd = unsafe { std::alloc::alloc(layout) };
         let mem_hd_val = Value(mem_hd as usize);
 
@@ -275,13 +283,13 @@ mod freelist_tests {
         );
 
         // should cause a split
-        let small_sz = 16;
+        let small_sz = Wsize::new(16);
         let ptr = nf_allocate(small_sz);
-        assert_eq!(unsafe { (*ptr).get_size() }, small_sz);
+        assert_eq!(unsafe { (*ptr).get_size() }, *small_sz.get_val());
 
-        let rem_size = size - 1 - (small_sz + 1);
+        let rem_size = size - 1 - (small_sz.get_val() + 1);
         assert_eq!(
-            unsafe { (*nf_allocate(size - 1 - (small_sz + 1))).get_size() },
+            unsafe { (*nf_allocate(Wsize::new(size - 1 - (small_sz.get_val() + 1)))).get_size() },
             rem_size
         );
     }
