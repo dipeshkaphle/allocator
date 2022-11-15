@@ -5,7 +5,7 @@ use crate::{
     colors::CAML_BLUE,
     hd_bp,
     header::Header,
-    utils::{get_next, val_field},
+    utils::{field_val, get_next},
 };
 
 pub trait Val {
@@ -21,7 +21,7 @@ pub struct Value(pub usize);
 
 impl Val for Value {
     fn get_header(&self) -> &mut Header {
-        let f = val_field(*self, -1);
+        let f = field_val(*self, -1);
         let bp = Value(bp_val!(f) as usize);
         hd_bp!(bp.0 as *mut u8)
     }

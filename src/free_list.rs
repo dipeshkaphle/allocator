@@ -3,7 +3,7 @@ use std::sync::Once;
 use crate::{
     colors::CAML_BLUE,
     header::Header,
-    utils::{self, get_header_mut, get_next, val_bp, val_field, whsize_wosize, wosize_whsize},
+    utils::{self, field_val, get_header_mut, get_next, val_bp, whsize_wosize, wosize_whsize},
     value::{Val, Value, VAL_NULL},
     word::Wsize,
 };
@@ -52,6 +52,20 @@ impl NfGlobals {
 
         unsafe { &mut NF_GLOBAL }
     }
+}
+
+pub fn clear_fl() {
+    unsafe {
+        SENTINEL.first_field = VAL_NULL;
+        *NfGlobals::get() = NfGlobals {
+            cur_wsz: Wsize::new(0),
+            nf_head: val_bp(std::ptr::addr_of_mut!(SENTINEL.first_field) as *mut u8),
+            nf_prev: Value(0),
+            nf_last: Value(0),
+        };
+    }
+    NfGlobals::get().nf_last = NfGlobals::get().nf_head;
+    NfGlobals::get().nf_prev = NfGlobals::get().nf_head;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -139,7 +153,7 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
     let offset = *hd_sz.get_val() as isize - *wh_sz.get_val() as isize;
 
     // Set the header for the memory that we'll be returning
-    let vf = val_field(cur, offset + 1);
+    let vf = field_val(cur, offset + 1);
     *vf.get_header() = Header::new(*wosize_whsize(wh_sz).get_val(), CAML_BLUE, 0);
 
     NfGlobals::get().nf_prev = prev;
@@ -148,7 +162,7 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
         println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
     }
 
-    (val_field(cur, offset).0 as *mut usize) as *mut Header
+    (field_val(cur, offset).0 as *mut usize) as *mut Header
 }
 
 pub fn nf_allocate(wo_sz: Wsize) -> *mut Header {
@@ -162,7 +176,7 @@ pub fn nf_allocate(wo_sz: Wsize) -> *mut Header {
 
 pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
     // We'll just allocate twice as much as the request, if request >= 1MB, else 1MB
-    const MIN_WOSZ_EXPAND: Wsize = Wsize::new(1024 * 1024);
+    const MIN_WOSZ_EXPAND: Wsize = Wsize::new(1024 * 1024 * 1024);
     if request_wo_sz >= MIN_WOSZ_EXPAND {
         *request_wo_sz.get_val_mut() <<= 1;
     } else {
@@ -183,9 +197,9 @@ pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
     );
 
     if cfg!(debug_assertions) {
-        println!("[nf_expand_heap]{:?}", val_field(mem_hd_val, 1));
+        println!("[nf_expand_heap]{:?}", field_val(mem_hd_val, 1));
     }
-    nf_add_block(val_field(mem_hd_val, 1));
+    nf_add_block(field_val(mem_hd_val, 1));
 }
 
 fn nf_add_block(val: Value) {
@@ -245,9 +259,9 @@ where
 mod freelist_tests {
     use crate::{
         colors::CAML_BLUE,
-        free_list::{nf_add_block, nf_allocate, FreeList, NfGlobals, VAL_NULL},
+        free_list::{clear_fl, nf_add_block, nf_allocate, FreeList, NfGlobals, VAL_NULL},
         header::Header,
-        utils::{self, get_header_mut, get_next, val_field},
+        utils::{self, field_val, get_header_mut, get_next},
         value::{Val, Value},
         word::Wsize,
     };
@@ -266,7 +280,7 @@ mod freelist_tests {
 
         assert_eq!(FreeList::new().nf_iter().count(), 0);
 
-        nf_add_block(val_field(mem_hd_val, 1));
+        nf_add_block(field_val(mem_hd_val, 1));
 
         assert_eq!(FreeList::new().nf_iter().count(), 1);
         assert_eq!(*get_next(&NfGlobals::get().nf_last), VAL_NULL);

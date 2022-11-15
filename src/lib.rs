@@ -7,7 +7,7 @@ mod value;
 mod word;
 
 use free_list::{nf_allocate, nf_deallocate, nf_expand_heap, FreeList};
-use utils::val_field;
+use utils::field_val;
 use value::{Value, VAL_NULL};
 use word::Wsize;
 
@@ -24,13 +24,15 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
         assert_eq!(FreeList::new().nf_iter().count(), prev_cnt + 1);
         mem = nf_allocate(Wsize::new(wo_sz as usize));
     }
-    val_field(Value(mem as usize), 1).0 as *mut u8
+    field_val(Value(mem as usize), 1).0 as *mut u8
 }
 
 #[no_mangle]
 pub extern "C" fn dealloc(ptr: *mut u8) {
     let val_ptr = Value(ptr as usize);
-
+    if val_ptr == VAL_NULL {
+        return;
+    }
     nf_deallocate(val_ptr);
 }
 
@@ -38,7 +40,11 @@ pub extern "C" fn dealloc(ptr: *mut u8) {
 mod tests {
 
     use crate::{
-        alloc, dealloc, free_list::FreeList, utils::whsize_wosize, value::Val, word::Wsize,
+        alloc, dealloc,
+        free_list::{clear_fl, FreeList},
+        utils::whsize_wosize,
+        value::Val,
+        word::Wsize,
     };
 
     #[test]

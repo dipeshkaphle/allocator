@@ -5,6 +5,15 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "rlib"]
+
+[dev-dependencies]
+criterion = "0.3"
+rand= { version = "0.8.5",  features = ["small_rng"] }
+
+[[bench]]
+name = "benchmark"
+harness = false
 
 [dependencies]
+
