@@ -1,4 +1,7 @@
-use std::sync::Once;
+use std::{
+    env::{self},
+    sync::Once,
+};
 
 use crate::{
     colors::CAML_BLUE,
@@ -149,8 +152,8 @@ impl Iterator for NfIter {
 }
 
 fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
-    #[cfg(debug_assertions)]
-    println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
+    // #[cfg(debug_assertions)]
+    // println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
 
     let hd_sz = Wsize::new(cur.get_header().get_size());
     if cur.get_header().get_size() < (wh_sz.get_val() + 1) {
@@ -164,8 +167,8 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
             Header::new(cur.get_header().get_size() - wh_sz.get_val(), CAML_BLUE, 0);
     }
 
-    #[cfg(debug_assertions)]
-    println!("[nf_allocate_block] {:?}", cur);
+    // #[cfg(debug_assertions)]
+    // println!("[nf_allocate_block] {:?}", cur);
 
     let offset = *hd_sz.get_val() as isize - *wh_sz.get_val() as isize;
 
@@ -175,8 +178,8 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
 
     NfGlobals::get().nf_prev = prev;
 
-    #[cfg(debug_assertions)]
-    println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
+    // #[cfg(debug_assertions)]
+    // println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
 
     (field_val(cur, offset).0 as *mut usize) as *mut Header
 }
@@ -192,11 +195,16 @@ pub fn nf_allocate(wo_sz: Wsize) -> *mut Header {
 
 fn get_actual_wosz_to_request(mut request_wo_sz: Wsize) -> Wsize {
     // We'll just allocate twice as much as the request, if request >= 1MB, else 1MB
-    const MIN_WOSZ_EXPAND: Wsize = Wsize::new(1024 * 1024 * 1024);
-    if request_wo_sz >= MIN_WOSZ_EXPAND {
+    let min_wosz_expand: Wsize = env::var("MIN_EXPANSION_WORDSIZE")
+        .ok()
+        .and_then(|x| x.parse::<usize>().ok())
+        .map(Wsize::new)
+        .unwrap_or(Wsize::new((1024 >> 3) * 1024 * 1024));
+
+    if request_wo_sz >= min_wosz_expand {
         *request_wo_sz.get_val_mut() <<= 1;
     } else {
-        request_wo_sz = MIN_WOSZ_EXPAND;
+        request_wo_sz = min_wosz_expand;
     }
     request_wo_sz
 }
@@ -222,8 +230,8 @@ pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
         LAST_EXPANDHEAP_START_END = (mem_hd_val.0, mem_hd_val.0 + layout.size());
     }
 
-    #[cfg(debug_assertions)]
-    println!("[nf_expand_heap]{:?}", field_val(mem_hd_val, 1));
+    // #[cfg(debug_assertions)]
+    // println!("[nf_expand_heap]{:?}", field_val(mem_hd_val, 1));
 
     nf_add_block(field_val(mem_hd_val, 1));
 }
@@ -262,14 +270,15 @@ pub fn nf_deallocate(val: Value) {
         return;
     }
 
-    let it = FreeList::new()
+    if let Some(it) = FreeList::new()
         .nf_iter()
         .find(|it| it.cur > val && it.prev < val)
-        .unwrap();
-    *get_next(&val) = it.cur;
-    *get_next(&it.prev) = val;
-    try_merge(val, it.cur);
-    try_merge(it.prev, val);
+    {
+        *get_next(&val) = it.cur;
+        *get_next(&it.prev) = val;
+        try_merge(val, it.cur);
+        try_merge(it.prev, val);
+    }
 }
 
 pub fn traverse_fl<F>(f: F)

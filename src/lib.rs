@@ -25,31 +25,20 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
     let mut mem = nf_allocate(Wsize::new(wo_sz as usize));
     static mut EXPANDED_HEAP_CNT: usize = 0;
 
-    #[cfg(debug_assertions)]
-    if Value(mem as usize) != VAL_NULL {
-        let mem_as_usize = mem as usize;
-        if !unsafe { &MEM_RANGES }
-            .iter()
-            .any(|r| r.0 <= mem_as_usize && mem_as_usize <= r.1)
-        {
-            panic!(
-                "Invalid Memory, Got mem address: {}\n Valid memory addresses: {:?}",
-                mem_as_usize,
-                unsafe { &MEM_RANGES }
-            );
-        }
-    }
-
     #[cfg(feature = "no_expand_heap")]
     if unsafe { EXPANDED_HEAP_CNT } == 1 {
-        let ret_val = field_val(Value(mem as usize), 1).0 as *mut u8;
-        return ret_val;
+        if !mem.is_null() {
+            return field_val(Value(mem as usize), 1).0 as *mut u8;
+        }
+        return std::ptr::null_mut();
     }
 
     if Value(mem as usize) == VAL_NULL {
         // add new block and allocate
         let prev_cnt = FreeList::new().nf_iter().count();
         nf_expand_heap(Wsize::new(wo_sz as usize));
+
+        // println!("EXPANDING HEAP");
 
         #[cfg(feature = "no_expand_heap")]
         unsafe {
@@ -63,23 +52,12 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
 
         assert_eq!(FreeList::new().nf_iter().count(), prev_cnt + 1);
         mem = nf_allocate(Wsize::new(wo_sz as usize));
-
-        #[cfg(debug_assertions)]
-        if Value(mem as usize) != VAL_NULL {
-            let mem_as_usize = mem as usize;
-            if !unsafe { &MEM_RANGES }
-                .iter()
-                .any(|r| r.0 <= mem_as_usize && mem_as_usize <= r.1)
-            {
-                panic!(
-                    "Invalid Memory, Got mem address: {}\n Valid memory addresses: {:?}",
-                    mem_as_usize,
-                    unsafe { &MEM_RANGES }
-                );
-            }
-        }
     }
-    field_val(Value(mem as usize), 1).0 as *mut u8
+    if !mem.is_null() {
+        field_val(Value(mem as usize), 1).0 as *mut u8
+    } else {
+        std::ptr::null_mut()
+    }
 }
 
 #[no_mangle]
