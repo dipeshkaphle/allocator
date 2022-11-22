@@ -23,6 +23,24 @@ static mut SENTINEL: SentinelType = SentinelType {
     filler2: Value(0),
 };
 
+#[cfg(debug_assertions)]
+#[derive(Debug)]
+pub struct NfGlobals {
+    pub cur_wsz: Wsize,
+    pub nf_head: Value,
+    pub nf_prev: Value,
+    pub nf_last: Value,
+}
+
+#[cfg(debug_assertions)]
+static mut LAST_EXPANDHEAP_START_END: (usize, usize) = (0, 0);
+
+#[cfg(debug_assertions)]
+pub fn get_start_end_after_heap_expand() -> (usize, usize) {
+    unsafe { LAST_EXPANDHEAP_START_END }
+}
+
+#[cfg(not(debug_assertions))]
 #[derive(Debug)]
 struct NfGlobals {
     pub cur_wsz: Wsize,
@@ -174,7 +192,7 @@ pub fn nf_allocate(wo_sz: Wsize) -> *mut Header {
     }
 }
 
-pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
+fn get_actual_wosz_to_request(mut request_wo_sz: Wsize) -> Wsize {
     // We'll just allocate twice as much as the request, if request >= 1MB, else 1MB
     const MIN_WOSZ_EXPAND: Wsize = Wsize::new(1024 * 1024 * 1024);
     if request_wo_sz >= MIN_WOSZ_EXPAND {
@@ -182,12 +200,17 @@ pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
     } else {
         request_wo_sz = MIN_WOSZ_EXPAND;
     }
+    request_wo_sz
+}
 
+pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
+    request_wo_sz = get_actual_wosz_to_request(request_wo_sz);
     // alloc expects the request in bytes
     let layout = utils::get_layout(request_wo_sz);
 
     // Assuming this'll never fail
     let mut mem_hd = unsafe { std::alloc::alloc_zeroed(layout) };
+
     let mem_hd_val = Value(mem_hd as usize);
     assert_ne!(mem_hd, std::ptr::null_mut());
     *get_header_mut(&mut mem_hd) = Header::new(
@@ -195,6 +218,11 @@ pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
         CAML_BLUE,
         0,
     );
+
+    #[cfg(debug_assertions)]
+    unsafe {
+        LAST_EXPANDHEAP_START_END = (mem_hd_val.0, mem_hd_val.0 + layout.size());
+    }
 
     if cfg!(debug_assertions) {
         println!("[nf_expand_heap]{:?}", field_val(mem_hd_val, 1));
