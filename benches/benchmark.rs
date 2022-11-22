@@ -3,7 +3,7 @@ use rand::prelude::*;
 
 fn fragment_memory() {
     let mut rng = SmallRng::seed_from_u64(42);
-    let h = 100;
+    let h = 50000;
     let allocs = (0..h)
         .into_iter()
         .map(|_| rust_allocator::alloc(rng.gen_range(1..100)))

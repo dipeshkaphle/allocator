@@ -40,7 +40,8 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
         }
     }
 
-    if cfg!(feature = "no_expand_heap") && unsafe { EXPANDED_HEAP_CNT } == 1 {
+    #[cfg(feature = "no_expand_heap")]
+    if unsafe { EXPANDED_HEAP_CNT } == 1 {
         let ret_val = field_val(Value(mem as usize), 1).0 as *mut u8;
         return ret_val;
     }
@@ -50,10 +51,9 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
         let prev_cnt = FreeList::new().nf_iter().count();
         nf_expand_heap(Wsize::new(wo_sz as usize));
 
-        if cfg!(feature = "no_expand_heap") {
-            unsafe {
-                EXPANDED_HEAP_CNT += 1;
-            }
+        #[cfg(feature = "no_expand_heap")]
+        unsafe {
+            EXPANDED_HEAP_CNT += 1;
         }
 
         #[cfg(debug_assertions)]

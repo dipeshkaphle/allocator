@@ -149,9 +149,8 @@ impl Iterator for NfIter {
 }
 
 fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
-    if cfg!(debug_assertions) {
-        println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
-    }
+    #[cfg(debug_assertions)]
+    println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
 
     let hd_sz = Wsize::new(cur.get_header().get_size());
     if cur.get_header().get_size() < (wh_sz.get_val() + 1) {
@@ -164,9 +163,9 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
         *cur.get_header() =
             Header::new(cur.get_header().get_size() - wh_sz.get_val(), CAML_BLUE, 0);
     }
-    if cfg!(debug_assertions) {
-        println!("[nf_allocate_block] {:?}", cur);
-    }
+
+    #[cfg(debug_assertions)]
+    println!("[nf_allocate_block] {:?}", cur);
 
     let offset = *hd_sz.get_val() as isize - *wh_sz.get_val() as isize;
 
@@ -176,9 +175,8 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
 
     NfGlobals::get().nf_prev = prev;
 
-    if cfg!(debug_assertions) {
-        println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
-    }
+    #[cfg(debug_assertions)]
+    println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
 
     (field_val(cur, offset).0 as *mut usize) as *mut Header
 }
@@ -224,9 +222,9 @@ pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
         LAST_EXPANDHEAP_START_END = (mem_hd_val.0, mem_hd_val.0 + layout.size());
     }
 
-    if cfg!(debug_assertions) {
-        println!("[nf_expand_heap]{:?}", field_val(mem_hd_val, 1));
-    }
+    #[cfg(debug_assertions)]
+    println!("[nf_expand_heap]{:?}", field_val(mem_hd_val, 1));
+
     nf_add_block(field_val(mem_hd_val, 1));
 }
 

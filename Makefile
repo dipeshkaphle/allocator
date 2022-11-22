@@ -1,7 +1,7 @@
 rust-release:
-	cargo build --release
+	cargo build --release $(CARGO_FLAGS)
 rust-debug:
-	cargo build
+	cargo build $(CARGO_FLAGS)
 main: rust-release
 	gcc $(DEFINES) -o main main.c -L target/release -l rust_allocator -fsanitize=address
 crash: rust-debug
