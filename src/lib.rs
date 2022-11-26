@@ -8,7 +8,7 @@ mod word;
 
 use free_list::{nf_allocate, nf_deallocate, nf_expand_heap, FreeList};
 use utils::field_val;
-use value::{Value, VAL_NULL};
+use value::{Val, Value, VAL_NULL};
 use word::Wsize;
 
 #[cfg(debug_assertions)]
@@ -27,18 +27,13 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
 
     #[cfg(feature = "no_expand_heap")]
     if unsafe { EXPANDED_HEAP_CNT } == 1 {
-        if !mem.is_null() {
-            return field_val(Value(mem as usize), 1).0 as *mut u8;
-        }
-        return std::ptr::null_mut();
+        return field_val(Value(mem as usize), 1).0 as *mut u8;
     }
 
     if Value(mem as usize) == VAL_NULL {
         // add new block and allocate
         let prev_cnt = FreeList::new().nf_iter().count();
         nf_expand_heap(Wsize::new(wo_sz as usize));
-
-        // println!("EXPANDING HEAP");
 
         #[cfg(feature = "no_expand_heap")]
         unsafe {
@@ -53,17 +48,15 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
         assert_eq!(FreeList::new().nf_iter().count(), prev_cnt + 1);
         mem = nf_allocate(Wsize::new(wo_sz as usize));
     }
-    if !mem.is_null() {
-        field_val(Value(mem as usize), 1).0 as *mut u8
-    } else {
-        std::ptr::null_mut()
-    }
+    field_val(Value(mem as usize), 1).0 as *mut u8
 }
 
 #[no_mangle]
 pub extern "C" fn dealloc(ptr: *mut u8) {
     let val_ptr = Value(ptr as usize);
-    if val_ptr == VAL_NULL {
+    let hd_ptr = field_val(Value(ptr as usize), -1);
+
+    if hd_ptr == VAL_NULL {
         return;
     }
 
@@ -88,34 +81,62 @@ pub extern "C" fn dealloc(ptr: *mut u8) {
 mod tests {
 
     use crate::{
-        alloc, dealloc, free_list::FreeList, utils::whsize_wosize, value::Val, word::Wsize,
+        alloc, dealloc,
+        free_list::{traverse_fl, FreeList},
+        utils::whsize_wosize,
+        value::Val,
     };
 
     #[test]
     fn tests() {
-        let req: usize = 1024 * 8;
-        let alloc_mem = alloc(req as u64);
-        assert_ne!(alloc_mem, std::ptr::null_mut());
+        // 1st allocation
+        let req1: usize = 1024 * 8;
+        let allocd_mem1 = alloc(req1 as u64);
+        assert_ne!(allocd_mem1, std::ptr::null_mut());
         // traverse_fl(|v| println!("{:?}", v));
         assert_eq!(FreeList::new().nf_iter().count(), 1);
 
-        let total_sz: usize = FreeList::new()
+        let total_sz_after_1_alloc: usize = FreeList::new()
             .nf_iter()
-            .map(|v| *whsize_wosize(Wsize::new(v.cur.get_header().get_size())).get_val())
+            .map(|v| *whsize_wosize(v.cur.get_header().get_wosize()).get_val())
             .sum();
 
-        dealloc(alloc_mem);
-        assert_eq!(FreeList::new().nf_iter().count(), 2);
+        // Still 1, because we caused a split in free list
+        assert_eq!(FreeList::new().nf_iter().count(), 1);
 
         assert_eq!(
             FreeList::new()
                 .nf_iter()
-                .map(|v| *whsize_wosize(Wsize::new(v.cur.get_header().get_size())).get_val())
+                .map(|v| *whsize_wosize(v.cur.get_header().get_wosize()).get_val())
                 .sum::<usize>(),
-            total_sz + req + 1
+            total_sz_after_1_alloc
         );
 
-        // traverse_fl(|v| println!("{:?}", v));
+        // 2nd allocation
+        let req2 = 1024;
+        let allocd_mem2 = alloc(req2 as u64);
+        assert_ne!(allocd_mem2, std::ptr::null_mut());
+
+        assert_eq!(
+            FreeList::new()
+                .nf_iter()
+                .map(|v| *whsize_wosize(v.cur.get_header().get_wosize()).get_val())
+                .sum::<usize>(),
+            total_sz_after_1_alloc - (req2 + 1)
+        );
+
+        // Freeing both
+
+        dealloc(allocd_mem1);
+
+        // The allocd_mem2 is missing for the merge to happen
+        assert_eq!(FreeList::new().nf_iter().count(), 2);
+
+        dealloc(allocd_mem2);
+
+        // Should be 1 now, due to merge
+        assert_eq!(FreeList::new().nf_iter().count(), 1);
+
         // //since it's first fit this should pass
         // assert_eq!(alloc(256 * 1024), alloc_mem);
     }

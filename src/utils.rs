@@ -90,8 +90,6 @@ pub fn field_ref_mut(val: &Value, index: isize) -> &mut Value {
 
     let offs = unsafe { val_as_mut_value.offset(index) };
 
-    let _unused = Value(offs as usize);
-
     unsafe { &mut *offs }
 }
 
@@ -99,9 +97,18 @@ pub fn field_ref_mut(val: &Value, index: isize) -> &mut Value {
 pub fn field_val(val: Value, index: isize) -> Value {
     let val_as_ptr = val.0 as *mut Value;
 
-    let offs = unsafe { val_as_ptr.offset(index) };
-
-    let _unused = Value(offs as usize);
+    let offs = val_as_ptr.wrapping_offset(index);
+    // let offs = unsafe { val_as_ptr.offset(index) };
 
     Value(offs as usize)
+}
+
+#[test]
+pub fn field_val_test() {
+    let mem = field_val(Value(std::ptr::null_mut() as *mut u8 as usize), 1).0 as *mut u8;
+    assert_eq!(field_val(Value(mem as usize), -1), Value(0));
+    assert_eq!(
+        field_val(Value(std::ptr::null_mut() as *mut u8 as usize), 1),
+        Value(8)
+    );
 }

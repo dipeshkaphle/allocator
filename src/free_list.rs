@@ -9,6 +9,7 @@ use crate::{
     utils::{self, field_val, get_header_mut, get_next, val_bp, whsize_wosize, wosize_whsize},
     value::{Val, Value, VAL_NULL},
     word::Wsize,
+    DEFAULT_TAG,
 };
 
 #[repr(C)]
@@ -102,7 +103,7 @@ impl FreeList {
 
     fn find_next(&mut self, wo_sz: Wsize) -> Option<NfIterVal> {
         self.nf_iter()
-            .find(|e| e.cur.get_header().get_size() >= *wo_sz.get_val())
+            .find(|e| e.cur.get_header().get_wosize().get_val() >= wo_sz.get_val())
     }
 }
 
@@ -155,16 +156,19 @@ fn nf_allocate_block(prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
     // #[cfg(debug_assertions)]
     // println!("[nf_allocate_block] prev: {:?}\ncur:{:?}", prev, cur);
 
-    let hd_sz = Wsize::new(cur.get_header().get_size());
-    if cur.get_header().get_size() < (wh_sz.get_val() + 1) {
+    let hd_sz = cur.get_header().get_wosize();
+    if *cur.get_header().get_wosize().get_val() < (wh_sz.get_val() + 1) {
         *NfGlobals::get().cur_wsz.get_val_mut() -=
-            whsize_wosize(Wsize::new(cur.get_header().get_size())).get_val();
+            whsize_wosize(cur.get_header().get_wosize()).get_val();
         *get_next(&prev) = *get_next(&cur);
         *cur.get_header() = Header::new(0, CAML_BLUE, 0);
     } else {
         *NfGlobals::get().cur_wsz.get_val_mut() -= wh_sz.get_val();
-        *cur.get_header() =
-            Header::new(cur.get_header().get_size() - wh_sz.get_val(), CAML_BLUE, 0);
+        *cur.get_header() = Header::new(
+            cur.get_header().get_wosize().get_val() - wh_sz.get_val(),
+            CAML_BLUE,
+            0,
+        );
     }
 
     // #[cfg(debug_assertions)]
@@ -239,7 +243,7 @@ pub fn nf_expand_heap(mut request_wo_sz: Wsize) {
 fn nf_add_block(val: Value) {
     let it = FreeList::new().nf_iter().find(|e| e.cur > val);
     *NfGlobals::get().cur_wsz.get_val_mut() +=
-        whsize_wosize(Wsize::new(val.get_header().get_size())).get_val();
+        whsize_wosize(val.get_header().get_wosize()).get_val();
     match it {
         None => {
             // means its the last most address
@@ -255,18 +259,37 @@ fn nf_add_block(val: Value) {
 }
 
 fn try_merge(prev: Value, cur: Value) {
-    // no-op right now
+    let prev_wosz = prev.get_header().get_wosize();
+    let prev_next_val = field_val(prev, (*prev_wosz.get_val()) as _);
+    if prev_next_val == field_val(cur, -1) {
+        *get_next(&prev) = *get_next(&cur);
+        *prev.get_header() = Header::new(
+            *prev_wosz.get_val() + whsize_wosize(cur.get_header().get_wosize()).get_val(),
+            CAML_BLUE,
+            DEFAULT_TAG,
+        )
+    }
 }
 
 pub fn nf_deallocate(val: Value) {
     *NfGlobals::get().cur_wsz.get_val_mut() +=
-        whsize_wosize(Wsize::new(val.get_header().get_size())).get_val();
+        whsize_wosize(val.get_header().get_wosize()).get_val();
     if val > NfGlobals::get().nf_last {
         let prev = NfGlobals::get().nf_last;
         *get_next(&NfGlobals::get().nf_last) = val;
         NfGlobals::get().nf_last = val;
         *get_next(&NfGlobals::get().nf_last) = VAL_NULL;
+        #[cfg(not(feature = "no_merge"))]
         try_merge(prev, val);
+        return;
+    }
+
+    if val.0 <= get_next(&NfGlobals::get().nf_head).0 {
+        let prev_first = *get_next(&NfGlobals::get().nf_head);
+        *get_next(&NfGlobals::get().nf_head) = val;
+        *get_next(&val) = prev_first;
+        #[cfg(not(feature = "no_merge"))]
+        try_merge(val, prev_first);
         return;
     }
 
@@ -276,8 +299,11 @@ pub fn nf_deallocate(val: Value) {
     {
         *get_next(&val) = it.cur;
         *get_next(&it.prev) = val;
-        try_merge(val, it.cur);
-        try_merge(it.prev, val);
+        #[cfg(not(feature = "no_merge"))]
+        {
+            try_merge(val, it.cur);
+            try_merge(it.prev, val);
+        }
     }
 }
 

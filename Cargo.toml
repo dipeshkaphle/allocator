@@ -17,6 +17,7 @@ harness = false
 
 [features]
 no_expand_heap = []
+no_merge = []
 
 [dependencies]
 
