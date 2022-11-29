@@ -258,7 +258,7 @@ fn nf_add_block(val: Value) {
     }
 }
 
-fn try_merge(prev: Value, cur: Value) {
+fn try_merge(prev: Value, cur: Value) -> bool {
     let prev_wosz = prev.get_header().get_wosize();
     let prev_next_val = field_val(prev, (*prev_wosz.get_val()) as _);
     if prev_next_val == field_val(cur, -1) {
@@ -267,7 +267,10 @@ fn try_merge(prev: Value, cur: Value) {
             *prev_wosz.get_val() + whsize_wosize(cur.get_header().get_wosize()).get_val(),
             CAML_BLUE,
             DEFAULT_TAG,
-        )
+        );
+        true
+    } else {
+        false
     }
 }
 
@@ -280,7 +283,11 @@ pub fn nf_deallocate(val: Value) {
         NfGlobals::get().nf_last = val;
         *get_next(&NfGlobals::get().nf_last) = VAL_NULL;
         #[cfg(not(feature = "no_merge"))]
-        try_merge(prev, val);
+        if try_merge(prev, val) {
+            NfGlobals::get().nf_last = prev;
+            *get_next(&NfGlobals::get().nf_last) = VAL_NULL;
+        }
+        // NfGlobals::get().nf_prev = NfGlobals::get().nf_last;
         return;
     }
 
@@ -289,7 +296,8 @@ pub fn nf_deallocate(val: Value) {
         *get_next(&NfGlobals::get().nf_head) = val;
         *get_next(&val) = prev_first;
         #[cfg(not(feature = "no_merge"))]
-        try_merge(val, prev_first);
+        let _ = try_merge(val, prev_first);
+        // NfGlobals::get().nf_prev = *get_next(&NfGlobals::get().nf_head);
         return;
     }
 
@@ -301,9 +309,10 @@ pub fn nf_deallocate(val: Value) {
         *get_next(&it.prev) = val;
         #[cfg(not(feature = "no_merge"))]
         {
-            try_merge(val, it.cur);
-            try_merge(it.prev, val);
+            let _ = try_merge(val, it.cur);
+            let _ = try_merge(it.prev, val);
         }
+        // NfGlobals::get().nf_prev = it.prev;
     }
 }
 
