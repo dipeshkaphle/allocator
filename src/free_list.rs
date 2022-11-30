@@ -203,15 +203,15 @@ static mut SENTINEL: SentinelType = SentinelType {
 
 #[derive(Debug)]
 pub struct NfGlobals {
-    pub cur_wsz: Wsize,
-    pub nf_head: Value,
-    pub nf_prev: Value,
-    pub nf_last: Value,
+    cur_wsz: Wsize,
+    nf_head: Value,
+    nf_prev: Value,
+    nf_last: Value,
 }
 
 impl NfGlobals {
     #[inline(always)]
-    pub fn get() -> &'static mut Self {
+    fn get() -> &'static mut Self {
         static mut NF_GLOBAL: NfGlobals = NfGlobals {
             cur_wsz: Wsize::new(0),
             nf_head: Value(0),
