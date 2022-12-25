@@ -10,7 +10,7 @@ use utils::field_val;
 use value::{Value, VAL_NULL};
 use word::Wsize;
 
-use crate::{colors::CAML_BLACK, free_list::get_global_allocator, value::Val};
+use crate::free_list::get_global_allocator;
 
 pub const DEFAULT_COLOR: colors::Color = colors::CAML_BLUE;
 pub const DEFAULT_TAG: u8 = 0;
@@ -22,15 +22,9 @@ static mut MEM_RANGES: Vec<(usize, usize)> = vec![];
 pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
     let mut mem = get_global_allocator().nf_allocate(Wsize::new(wo_sz as usize));
 
-    // println!(
-    // "=====\n{:?}\n==========",
-    // get_global_allocator().get_globals()
-    // );
     #[cfg(feature = "no_expand_heap")]
     if get_global_allocator().get_num_of_expansions() == 1 {
-        assert!(val_hp!(mem).get_header().get_color() == CAML_BLACK);
-        return val_hp!(mem).0 as *mut u8;
-        // return field_val(Value(mem as usize), 1).0 as *mut u8;
+        return field_val(Value(mem as usize), 1).0 as *mut u8;
     }
 
     if Value(mem as usize) == VAL_NULL {
@@ -44,9 +38,7 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
 
         mem = get_global_allocator().nf_allocate(Wsize::new(wo_sz as usize));
     }
-    assert!(val_hp!(mem).get_header().get_color() == CAML_BLACK);
-    val_hp!(mem).0 as *mut u8
-    // field_val(Value(mem as usize), 1).0 as *mut u8
+    field_val(Value(mem as usize), 1).0 as *mut u8
 }
 
 #[no_mangle]
