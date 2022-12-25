@@ -15,7 +15,7 @@ pub trait Val {
 
 pub const VAL_NULL: Value = Value(0);
 
-#[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Clone, Copy, Ord)]
 #[repr(transparent)]
 pub struct Value(pub usize);
 

@@ -1,21 +1,20 @@
-use std::collections::VecDeque;
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::mock::StepRng;
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
+use rust_allocator::val_hp;
 use shuffle::fy::FisherYates;
 use shuffle::shuffler::Shuffler;
 
-fn _fragment_memory() {
+fn _fragment_memory(high: usize) {
     let mut rng = SmallRng::seed_from_u64(42);
     let mut rng1 = SmallRng::seed_from_u64(0xcafebabe);
-    let h = 20000;
+    let h = high;
 
     let mut prev: *mut u8 = std::ptr::null_mut();
     (0..h).into_iter().for_each(|x| {
         let m = rust_allocator::alloc(rng.gen_range(1..100));
-        if x != 0 && rng1.gen_range(1..=100) > 80 {
+        if x != 0 && rng1.gen_range(1..=100) > 50 {
             rust_allocator::dealloc(prev);
         }
         prev = m;
@@ -25,8 +24,7 @@ fn _fragment_memory() {
 fn alloc_benchmark_small_inp(c: &mut Criterion) {
     // std::env::set_var("MIN_EXPANSION_WORDSIZE", "1048576");
 
-    // _fragment_memory();
-    // println!("INFO: Fragmented memory");
+    // _fragment_memory(1000);
     let mut rng1 = SmallRng::seed_from_u64(0xcafebabe);
 
     let mut vec = vec![];
@@ -38,11 +36,12 @@ fn alloc_benchmark_small_inp(c: &mut Criterion) {
             let mem = rust_allocator::alloc(black_box(rng1.gen_range(1..=4096)));
             vec.push(mem);
 
-            let _ = fy.shuffle(&mut vec, &mut step_rng);
-
-            if vec.len() == 100 {
-                rust_allocator::dealloc(*vec.last().unwrap());
-                vec.pop();
+            if vec.len() == 1000 {
+                let _ = fy.shuffle(&mut vec, &mut step_rng);
+                for index in 1..100 {
+                    rust_allocator::dealloc(*vec.last().unwrap());
+                    vec.pop();
+                }
             }
         })
     });
