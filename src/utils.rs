@@ -80,7 +80,14 @@ macro_rules! hd_bp {
 #[macro_export]
 macro_rules! hp_val {
     ($val: expr) => {
-        unsafe { &mut *(val as *mut Header).sub(1) }
+        unsafe { &mut *($val.0 as *mut Header).sub(1) }
+    };
+}
+
+#[macro_export]
+macro_rules! val_hp {
+    ($hp: expr) => {
+        unsafe { Value(($hp as *mut Header).add(1) as usize) }
     };
 }
 

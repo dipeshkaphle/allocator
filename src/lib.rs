@@ -42,29 +42,29 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn dealloc(ptr: *mut u8) {
-    let val_ptr = Value(ptr as usize);
-    let hd_ptr = field_val(Value(ptr as usize), -1);
+pub extern "C" fn dealloc(bp: *mut u8) {
+    let val_bp = Value(bp as usize);
+    let hd_bp = field_val(Value(bp as usize), -1);
 
-    if hd_ptr == VAL_NULL {
+    if hd_bp == VAL_NULL {
         return;
     }
 
     #[cfg(debug_assertions)]
     {
-        let ptr_as_usize = ptr as usize;
+        let bp_as_usize = bp as usize;
         if !unsafe { &MEM_RANGES }
             .iter()
-            .any(|r| r.0 <= ptr_as_usize && ptr_as_usize <= r.1)
+            .any(|r| r.0 <= bp_as_usize && bp_as_usize <= r.1)
         {
             panic!(
                 "Invalid Memory, Got mem address: {}\n Valid memory addresses: {:?}",
-                ptr_as_usize,
+                bp_as_usize,
                 unsafe { &MEM_RANGES }
             );
         }
     }
-    get_global_allocator().nf_deallocate(val_ptr);
+    get_global_allocator().nf_deallocate(val_bp);
 }
 
 #[cfg(test)]
