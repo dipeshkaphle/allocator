@@ -93,7 +93,7 @@ mod tests {
 
         let total_sz_after_1_alloc: usize = FreeList::new(get_global_allocator().get_globals())
             .nf_iter()
-            .map(|v| *whsize_wosize(v.cur.get_header().get_wosize()).get_val())
+            .map(|v| *whsize_wosize(v.get_cur().get_header().get_wosize()).get_val())
             .sum();
 
         // Still 1, because we caused a split in free list
@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(
             FreeList::new(get_global_allocator().get_globals())
                 .nf_iter()
-                .map(|v| *whsize_wosize(v.cur.get_header().get_wosize()).get_val())
+                .map(|v| *whsize_wosize(v.get_cur().get_header().get_wosize()).get_val())
                 .sum::<usize>(),
             total_sz_after_1_alloc
         );
@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(
             FreeList::new(get_global_allocator().get_globals())
                 .nf_iter()
-                .map(|v| *whsize_wosize(v.cur.get_header().get_wosize()).get_val())
+                .map(|v| *whsize_wosize(v.get_cur().get_header().get_wosize()).get_val())
                 .sum::<usize>(),
             total_sz_after_1_alloc - (req2 + 1)
         );

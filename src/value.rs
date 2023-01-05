@@ -21,6 +21,9 @@ pub struct Value(pub usize);
 
 impl Val for Value {
     fn get_header(&self) -> &mut Header {
+        #[cfg(debug_assertions)]
+        assert_ne!(*self, VAL_NULL, "Value is null, can't get header");
+
         let f = field_val(*self, -1);
         let bp = Value(bp_val!(f) as usize);
         hd_bp!(bp.0 as *mut u8)

@@ -1,4 +1,4 @@
-use std::alloc::Layout;
+use std::{alloc::Layout, env};
 
 use crate::{header::Header, value::Value, word::Wsize};
 
@@ -29,11 +29,36 @@ pub const SHIFT: usize = 2;
 #[cfg(target_pointer_width = "64")]
 pub const SHIFT: usize = 3;
 
+pub fn get_actual_wosz_to_request(mut request_wo_sz: Wsize) -> Wsize {
+    // We'll just allocate twice as much as the request, if request >= 1MB, else 1MB
+    let min_wosz_expand: Wsize = env::var("MIN_EXPANSION_WORDSIZE")
+        .ok()
+        .and_then(|x| x.parse::<usize>().ok())
+        .map(Wsize::new)
+        .unwrap_or(Wsize::new((1024 >> SHIFT) * 1024)); // 1MB = (1024*1024)/WORD_SIZE
+                                                        // words
+
+    if request_wo_sz >= min_wosz_expand {
+        *request_wo_sz.get_val_mut() <<= 1;
+    } else {
+        request_wo_sz = min_wosz_expand;
+    }
+    request_wo_sz
+}
+
 #[inline(always)]
 pub fn get_layout(mem_size: Wsize) -> std::alloc::Layout {
     let next_pow_of_two = mem_size.to_bytesize().next_power_of_two();
 
     Layout::from_size_align(next_pow_of_two, ALIGN).unwrap()
+}
+
+#[inline(always)]
+pub fn get_layout_and_actual_expansion_size(mut request_wo_sz: Wsize) -> (Layout, Wsize) {
+    request_wo_sz = get_actual_wosz_to_request(request_wo_sz);
+
+    let layout = get_layout(request_wo_sz);
+    (layout, Wsize::from_bytesize(layout.size()))
 }
 
 #[inline(always)]
