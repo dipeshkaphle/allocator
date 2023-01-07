@@ -62,11 +62,6 @@ pub fn get_layout_and_actual_expansion_size(mut request_wo_sz: Wsize) -> (Layout
 }
 
 #[inline(always)]
-pub fn get_header(ptr: &*mut u8) -> &Header {
-    unsafe { &*(*ptr as *mut Header) }
-}
-
-#[inline(always)]
 pub fn get_header_mut(ptr: &mut *mut u8) -> &mut Header {
     unsafe { &mut *(*ptr as *mut Header) }
 }

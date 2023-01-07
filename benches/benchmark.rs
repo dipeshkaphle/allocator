@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::mock::StepRng;
 use rand::rngs::SmallRng;
@@ -25,15 +23,14 @@ fn _fragment_memory() {
 fn alloc_benchmark_small_inp(c: &mut Criterion) {
     // std::env::set_var("MIN_EXPANSION_WORDSIZE", "1048576");
 
-    // _fragment_memory();
+    _fragment_memory();
     // println!("INFO: Fragmented memory");
-    let mut rng1 = SmallRng::seed_from_u64(0xcafebabe);
+    let mut rng1 = SmallRng::seed_from_u64(42);
 
     let mut vec = vec![];
 
     let mut step_rng = StepRng::new(2, 1);
     let mut fy = FisherYates::default();
-    let mut free_cnt = 0;
     c.bench_function("alloc after some random fragmentation", |b| {
         b.iter(|| {
             let mem = rust_allocator::alloc(black_box(rng1.gen_range(1..=4096)));

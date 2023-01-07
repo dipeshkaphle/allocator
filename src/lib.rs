@@ -6,9 +6,6 @@ mod utils;
 mod value;
 mod word;
 
-use std::panic::catch_unwind;
-
-use free_list::FreeList;
 use utils::field_val;
 use value::{Value, VAL_NULL};
 use word::Wsize;

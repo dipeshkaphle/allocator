@@ -1,4 +1,4 @@
-use std::{alloc::Layout, env, sync::Once};
+use std::{alloc::Layout, sync::Once};
 
 use crate::{
     colors::{CAML_BLACK, CAML_BLUE},
@@ -390,9 +390,6 @@ pub struct NfIter<'a> {
 }
 
 impl NfIter<'_> {
-    fn get_globals_mut(&mut self) -> &mut NfGlobals {
-        self.globals
-    }
     fn get_globals(&self) -> &NfGlobals {
         self.globals
     }
