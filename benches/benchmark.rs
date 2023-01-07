@@ -33,6 +33,7 @@ fn alloc_benchmark_small_inp(c: &mut Criterion) {
 
     let mut step_rng = StepRng::new(2, 1);
     let mut fy = FisherYates::default();
+    let mut free_cnt = 0;
     c.bench_function("alloc after some random fragmentation", |b| {
         b.iter(|| {
             let mem = rust_allocator::alloc(black_box(rng1.gen_range(1..=4096)));

@@ -6,6 +6,9 @@ mod utils;
 mod value;
 mod word;
 
+use std::panic::catch_unwind;
+
+use free_list::FreeList;
 use utils::field_val;
 use value::{Value, VAL_NULL};
 use word::Wsize;
@@ -22,6 +25,8 @@ static mut MEM_RANGES: Vec<(usize, usize)> = vec![];
 pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
     let mut mem = get_global_allocator().nf_allocate(Wsize::new(wo_sz as usize));
 
+    #[cfg(feature = "check_invariants")]
+    get_global_allocator().verify_nf_last_invariant();
     #[cfg(feature = "no_expand_heap")]
     if get_global_allocator().get_num_of_expansions() == 1 {
         return field_val(Value(mem as usize), 1).0 as *mut u8;
@@ -38,6 +43,10 @@ pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
 
         mem = get_global_allocator().nf_allocate(Wsize::new(wo_sz as usize));
     }
+
+    #[cfg(feature = "check_invariants")]
+    get_global_allocator().verify_nf_last_invariant();
+
     field_val(Value(mem as usize), 1).0 as *mut u8
 }
 
@@ -64,7 +73,11 @@ pub extern "C" fn dealloc(bp: *mut u8) {
             );
         }
     }
+
     get_global_allocator().nf_deallocate(val_bp);
+
+    #[cfg(feature = "check_invariants")]
+    get_global_allocator().verify_nf_last_invariant();
 }
 
 #[cfg(test)]

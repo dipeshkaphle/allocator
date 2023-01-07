@@ -1,7 +1,7 @@
 use std::{alloc::Layout, env, sync::Once};
 
 use crate::{
-    colors::CAML_BLUE,
+    colors::{CAML_BLACK, CAML_BLUE},
     header::Header,
     utils::{self, field_val, get_header_mut, get_next, val_bp, whsize_wosize, wosize_whsize},
     val_hp,
@@ -54,8 +54,23 @@ impl NfAllocator {
         self.num_of_heap_expansions
     }
 
+    #[cfg(feature = "check_invariants")]
+    fn check_nf_allocate_block_invariant(&mut self, prev: Value, cur: Value, wh_sz: Wsize) {
+        assert!(
+            (prev == self.get_globals().nf_head && cur == *get_next(&prev)) || (prev.0 < cur.0),
+            "[nf_allocate_block] prev<cur invariant broken"
+        );
+        assert!(
+            whsize_wosize(cur.get_header().get_wosize()) >= wh_sz,
+            "The invariant(block size should be enough) to be maintained is broken. to_be_allocated block doesnt have enough size to satisfy the request."
+        );
+    }
+
     fn nf_allocate_block(&mut self, prev: Value, cur: Value, wh_sz: Wsize) -> *mut Header {
         let hd_sz = cur.get_header().get_wosize();
+
+        #[cfg(feature = "check_invariants")]
+        self.check_nf_allocate_block_invariant(prev, cur, wh_sz);
 
         if *cur.get_header().get_wosize().get_val() < (wh_sz.get_val() + 1) {
             // If we're here, the size of header is exactly wh_sz or wo_sz[=wosize_whsize(wh_sz)]
@@ -87,6 +102,7 @@ impl NfAllocator {
             // This way we're always keeping track of nf_last properly
             if cur == self.get_globals().nf_last {
                 self.get_globals().nf_last = prev;
+                *get_next(&self.get_globals().nf_last) = VAL_NULL;
             }
         } else {
             self.get_globals().cur_wsz -= wh_sz;
@@ -107,9 +123,9 @@ impl NfAllocator {
         // case hd_sz >= wh_sz + 1 => positive value, the split block will have proper header
         let offset = *hd_sz.get_val() as isize - *wh_sz.get_val() as isize;
 
-        // Set the header for the memory that we'll be returning
+        // Set the header for the memory that we'll be returning, IMP: Make it have CAML_BLACK color
         let val = field_val(cur, offset + 1);
-        *val.get_header() = Header::new(*wosize_whsize(wh_sz).get_val(), CAML_BLUE, 0);
+        *val.get_header() = Header::new(*wosize_whsize(wh_sz).get_val(), CAML_BLACK, 0);
 
         self.get_globals().nf_prev = prev;
 
@@ -135,7 +151,12 @@ impl NfAllocator {
         // Assuming this'll never fail
         let mut mem_hd = unsafe { std::alloc::alloc_zeroed(*request_layout) };
 
-        assert_ne!(mem_hd, std::ptr::null_mut());
+        #[cfg(feature = "check_invariants")]
+        assert_ne!(
+            mem_hd,
+            std::ptr::null_mut(),
+            "Heap expansion never failing invariant failed"
+        );
 
         *get_header_mut(&mut mem_hd) =
             Header::new(no_of_words_in_layout.get_val() - 1, CAML_BLUE, 0);
@@ -181,19 +202,61 @@ impl NfAllocator {
             }
         }
     }
+    #[cfg(feature = "check_invariants")]
+    pub fn verify_nf_last_invariant(&mut self) {
+        assert!(
+            FreeList::new(self.get_globals())
+                .nf_iter()
+                .all(|it| it.get_prev() < it.get_cur()),
+            "Sorted free list invariant broken"
+        );
+
+        let largest_cur_val = FreeList::new(self.get_globals())
+            .nf_iter()
+            .fold(Value(0), |acc, e| Value(acc.0.max(e.get_cur().0)));
+
+        let nf_last = get_global_allocator().get_globals().nf_last;
+        let nf_head = get_global_allocator().get_globals().nf_head;
+        assert!(
+            (nf_last == nf_head) || largest_cur_val == nf_last,
+            "NfLast == LargestValueInFreeList Invariant failed.\nNfLast:{nf_last:?}\nLargestInFreeList:{largest_cur_val:?}\n",
+        );
+    }
+
+    #[cfg(not(feature = "no_merge"))]
+    fn merge_and_update_global(&mut self, left: Value, right: Value) {
+        let merged = try_merge(left, right);
+        if merged {
+            if self.get_globals().nf_last == right {
+                self.get_globals().nf_last = left;
+            }
+            if self.get_globals().nf_prev == right {
+                self.get_globals().nf_prev = left;
+            }
+        }
+    }
 
     pub fn nf_deallocate(&mut self, val: Value) {
         self.get_globals().cur_wsz += whsize_wosize(val.get_header().get_wosize());
+
+        // let nf_head = self.get_globals().nf_head;
+        // let nf_last = self.get_globals().nf_last;
+
+        *val.get_header() = Header::new(
+            *val.get_header().get_wosize().get_val(),
+            CAML_BLUE,
+            DEFAULT_TAG,
+        );
+
         if val > self.get_globals().nf_last {
             let prev = self.get_globals().nf_last;
             *get_next(&self.get_globals().nf_last) = val;
             self.get_globals().nf_last = val;
-            *get_next(&self.get_globals().nf_last) = VAL_NULL;
+
             #[cfg(not(feature = "no_merge"))]
-            if try_merge(prev, val) {
-                self.get_globals().nf_last = prev;
-                *get_next(&self.get_globals().nf_last) = VAL_NULL;
-            }
+            self.merge_and_update_global(prev, val);
+
+            *get_next(&self.get_globals().nf_last) = VAL_NULL;
             return;
         }
 
@@ -201,15 +264,18 @@ impl NfAllocator {
             || val.0 < get_next(&self.get_globals().nf_head).0
         {
             let prev_first = *get_next(&self.get_globals().nf_head);
+
             *get_next(&self.get_globals().nf_head) = val;
             *get_next(&val) = prev_first;
+
             if prev_first != VAL_NULL {
+                #[cfg(not(feature = "no_merge"))]
+                self.merge_and_update_global(val, prev_first);
+            } else {
                 // We must set nf_last to be val as *get_next( nf_head) == VAL_NULL => the list was
                 // empty. Must change nf_last
                 self.get_globals().nf_last = val;
-
-                #[cfg(not(feature = "no_merge"))]
-                let _ = try_merge(val, prev_first);
+                *get_next(&self.get_globals().nf_last) = VAL_NULL;
             }
             return;
         }
@@ -222,9 +288,25 @@ impl NfAllocator {
             *get_next(&it.get_actual_prev()) = val;
             #[cfg(not(feature = "no_merge"))]
             {
-                let _ = try_merge(val, it.get_cur());
-                let _ = try_merge(it.get_actual_prev(), val);
+                self.merge_and_update_global(val, it.get_cur());
+                self.merge_and_update_global(it.get_actual_prev(), val);
             }
+        } else {
+            FreeList::new(self.get_globals()).nf_iter().for_each(|it| {
+                eprintln!(
+                    "Prev:{:?}\nCur:{:?}\n------------------------------------------",
+                    it.get_prev(),
+                    it.get_cur()
+                );
+            });
+
+            // FreeList::new(self.get_globals())
+            // .nf_iter()
+            // .for_each(|x| eprintln!("{x:?}"));
+            panic!(
+                " \n\n===> Dellocation Request for: {val:?}\n Globals: {:?}\n",
+                self.get_globals(),
+            );
         }
     }
 }
@@ -357,10 +439,16 @@ impl Iterator for NfIter<'_> {
         } else {
             self.visited_start_once = true;
             if next == VAL_NULL {
-                self.get_globals_mut().nf_last = cur;
                 self.prev = self.get_globals().nf_head;
                 return self.next();
             }
+
+            #[cfg(feature = "check_invariants")]
+            assert_eq!(
+                next.get_header().get_color(),
+                CAML_BLUE,
+                "FreeList entry pointing to a non free list value. Invariant failed",
+            );
             self.prev = next;
             Some(Self::Item {
                 prev: cur,
@@ -394,16 +482,17 @@ pub fn get_global_allocator() -> &'static mut NfAllocator {
     unsafe { &mut GLOBAL_ALLOC }
 }
 
+#[cfg(not(feature = "no_merge"))]
 fn try_merge(prev: Value, cur: Value) -> bool {
     let prev_wosz = prev.get_header().get_wosize();
     let prev_next_val = field_val(prev, (*prev_wosz.get_val()) as _);
     if prev_next_val == field_val(cur, -1) {
-        *get_next(&prev) = *get_next(&cur);
         *prev.get_header() = Header::new(
             *prev_wosz.get_val() + whsize_wosize(cur.get_header().get_wosize()).get_val(),
             CAML_BLUE,
             DEFAULT_TAG,
         );
+        *get_next(&prev) = *get_next(&cur);
         true
     } else {
         false
@@ -507,6 +596,7 @@ mod tests {
                 }),
             Wsize::new(0)
         );
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 0);
 
         // Freeing the first allocation
         let to_be_freed_header = val_hp!(to_be_freed).get_header().clone();
@@ -518,6 +608,8 @@ mod tests {
         );
 
         let allocatable_memory_left = to_be_freed_header.get_wosize();
+
+        FreeList::new(allocator.get_globals()).nf_iter().count();
 
         // Allocating exactly allocatable_memory_left will again empty the freelist
         let hp = allocator.nf_allocate(allocatable_memory_left);

@@ -45,7 +45,7 @@ impl Debug for Value {
                     if self.get_header().get_color() == CAML_BLUE {
                         format!("{:?}", get_next(self).0)
                     } else {
-                        "NotFree".to_string()
+                        "[NA]This Value is NotFree".to_string()
                     }
                 })
                 .field("header", &self.get_header())

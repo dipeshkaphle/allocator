@@ -1,6 +1,9 @@
 use std::fmt::{self, Debug};
 
-use crate::{colors::Color, word::Wsize};
+use crate::{
+    colors::{Color, CAML_BLACK, CAML_BLUE, CAML_GRAY, CAML_WHITE},
+    word::Wsize,
+};
 
 #[repr(transparent)]
 #[derive(Clone)]
@@ -25,7 +28,15 @@ impl Debug for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Header")
             .field("size", &self.get_wosize())
-            .field("color", &self.get_color())
+            .field("color", {
+                match self.get_color() {
+                    CAML_BLUE => &"Blue",
+                    CAML_GRAY => &"Gray",
+                    CAML_BLACK => &"Black",
+                    CAML_WHITE => &"White",
+                    _ => &"Unknown",
+                }
+            })
             .field("tag", &self.get_tag())
             .finish()
     }
