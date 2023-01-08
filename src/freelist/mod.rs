@@ -25,11 +25,14 @@ mod tests {
         let memory = NfAllocator::allocate_for_heap_expansion(&layout);
         assert_eq!(
             memory.get_header().get_wosize(),
-            Wsize::new(request_wo_sz) - Wsize::from_bytesize(std::mem::size_of::<Pool>())
-                + Wsize::new(1)
+            Pool::get_field_wosz_from_pool_wosz(Wsize::new(request_wo_sz))
         );
 
         assert_eq!(memory.get_header().get_color(), CAML_BLUE);
+        assert_eq!(
+            pool_val!(memory).pool_wo_sz,
+            Wsize::from_bytesize(layout.size())
+        );
 
         unsafe { std::alloc::dealloc(pool_val!(memory) as *mut Pool as *mut u8, layout) };
     }
@@ -50,6 +53,9 @@ mod tests {
 
         let actual_expansion_size = Wsize::from_bytesize(layout.size());
 
+        // no pool block is there, there's only the one which is fixed and is not used in iter
+        assert_eq!(allocator.get_pool_iter().count(), 0);
+
         // nf_expand_heap heap will actually allocate for size=actual_expansion_size instead of
         // intended_expansion_size
         allocator.nf_expand_heap(intended_expansion_size);
@@ -59,7 +65,12 @@ mod tests {
         assert_eq!(allocator.get_globals().cur_wsz, pool_leader_wsz,);
 
         // 1 chunk is present in freelist after expansion
-        assert!(FreeList::new(allocator.get_globals()).nf_iter().count() == 1);
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+
+        // 1 pool block has been added as well
+        assert_eq!(allocator.get_pool_iter().count(), 1);
+        // this asserts invariant [ pool list being sorted]
+        allocator.check_pool_list_invariant();
 
         let mut allocations = vec![
             Some(allocator.nf_allocate(Wsize::new(1024))), // allocates 1024 + 1 word
@@ -133,5 +144,33 @@ mod tests {
                 }),
             Wsize::new(0)
         );
+
+        // Calling nf_expand_heap one more time.
+        // Currently there's one pool block and free list is empty
+
+        allocator.nf_expand_heap(intended_expansion_size);
+
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(allocator.get_globals().cur_wsz, pool_leader_wsz);
+
+        assert_eq!(allocator.get_pool_iter().count(), 2);
+        allocator.check_pool_list_invariant();
+
+        let mut pool_block_count = 2;
+        let mut freelist_node_count = 1;
+        // checking the pool invariant 10 more times
+        for i in 1..=10 {
+            pool_block_count += 1;
+            freelist_node_count += 1;
+            allocator.nf_expand_heap(intended_expansion_size);
+            assert_eq!(
+                FreeList::new(allocator.get_globals()).nf_iter().count(),
+                freelist_node_count
+            );
+            assert_eq!(allocator.get_globals().cur_wsz, pool_leader_wsz * (i + 1));
+
+            assert_eq!(allocator.get_pool_iter().count(), pool_block_count);
+            allocator.check_pool_list_invariant();
+        }
     }
 }

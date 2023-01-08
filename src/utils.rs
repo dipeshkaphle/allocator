@@ -116,7 +116,7 @@ macro_rules! hp_val {
 #[macro_export]
 macro_rules! pool_val {
     ($val: expr) => {
-        &mut *(field_val($val, -4).0 as *mut Pool)
+        unsafe { &mut *(field_val($val, -5).0 as *mut Pool) }
     };
 }
 

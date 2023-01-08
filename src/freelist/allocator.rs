@@ -4,6 +4,7 @@ use crate::{
     colors::{CAML_BLACK, CAML_BLUE},
     freelist::{fl::FreeList, pool::Pool},
     header::Header,
+    pool_val,
     utils::{
         self, field_val, get_header_mut, get_next, get_pool_mut, val_bp, whsize_wosize,
         wosize_whsize,
@@ -14,7 +15,10 @@ use crate::{
     DEFAULT_TAG,
 };
 
-use super::globals::{NfGlobals, SentinelType};
+use super::{
+    globals::{NfGlobals, SentinelType},
+    pool::{PoolIter, PoolIterVal},
+};
 
 pub struct NfAllocator {
     globals: NfGlobals,
@@ -31,18 +35,40 @@ impl NfAllocator {
             first_field: VAL_NULL,
             filler2: Value(0),
         }));
-        let head = val_bp(std::ptr::addr_of_mut!(sentinel.first_field) as *mut u8);
+        let sentinel_head = val_bp(std::ptr::addr_of_mut!(sentinel.first_field) as *mut u8);
+
+        let pool = Box::leak(Box::new(Pool {
+            pool_wo_sz: Wsize::new(0),
+            prev: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+            filler: Value(0),
+            hd: Header::new(0, CAML_BLUE, 0),
+            first_field: Value(0),
+        }));
+
+        let pool_addr = std::ptr::addr_of_mut!(*pool);
+        // Circular linked list invariant
+        pool.next = pool_addr;
+        pool.prev = pool_addr;
+
         Self {
             globals: NfGlobals {
                 cur_wsz: Wsize::new(0),
-                nf_head: head,
-                nf_prev: head,
-                nf_last: head,
+                nf_head: sentinel_head,
+                nf_prev: sentinel_head,
+                nf_last: sentinel_head,
+                pool_head: pool_addr,
             },
             #[cfg(debug_assertions)]
             last_expandheap_start_end: (0usize, 0usize),
             num_of_heap_expansions: 0usize,
         }
+    }
+
+    pub fn get_pool_iter(&mut self) -> PoolIter {
+        // at all times pool_head will point to valid pool(the global one with static lifetime or
+        // the one gotten through Box::leak)
+        PoolIter::new(&mut self.get_globals().pool_head)
     }
 
     #[inline(always)]
@@ -166,7 +192,8 @@ impl NfAllocator {
 
         let pool = get_pool_mut(&mut mem_hd);
         pool.pool_wo_sz = no_of_words_in_layout;
-        pool.next = std::ptr::null_mut();
+        pool.next = std::ptr::addr_of_mut!(*pool);
+        pool.prev = std::ptr::addr_of_mut!(*pool);
         pool.hd = Header::new(
             // Should have size = no_of_words_in_layout - sizeof(Pool) + 1 word(considering the first_field field)
             *Pool::get_field_wosz_from_pool_wosz(no_of_words_in_layout).get_val(),
@@ -182,8 +209,6 @@ impl NfAllocator {
     pub fn nf_expand_heap(&mut self, request_wo_sz: Wsize) {
         let (layout, _) = utils::get_layout_and_actual_expansion_size(request_wo_sz);
 
-        let no_of_bytes_in_layout = layout.size();
-
         let memory = Self::allocate_for_heap_expansion(&layout);
 
         #[cfg(debug_assertions)]
@@ -198,7 +223,83 @@ impl NfAllocator {
         self.num_of_heap_expansions += 1;
 
         // self.nf_add_block(field_val(mem_hd_val, 1));
+        self.nf_add_pool(pool_val!(memory));
+
+        #[cfg(feature = "check_invariants")]
+        self.check_pool_list_invariant();
+
         self.nf_add_block(memory)
+    }
+
+    pub fn check_pool_list_invariant(&mut self) {
+        let head_next_raw = Pool::get_next_raw_from_raw(&self.get_globals().pool_head);
+        let head_prev_raw = Pool::get_prev_raw_from_raw(&self.get_globals().pool_head);
+
+        assert_eq!(
+            Pool::get_next_raw_from_raw(&head_prev_raw),
+            self.get_globals().pool_head
+        );
+        assert_eq!(
+            Pool::get_prev_raw_from_raw(&head_next_raw),
+            self.get_globals().pool_head
+        );
+
+        let mut prev = head_next_raw;
+        assert!(
+            self.get_pool_iter().skip(1).all(|mut x| {
+                let cur_ptr = std::ptr::addr_of_mut!(*x.get_pool_mut());
+                let res = prev < cur_ptr;
+                let next = Pool::get_next_raw_from_raw(&cur_ptr);
+                assert_eq!(Pool::get_next_raw_from_raw(&prev), cur_ptr);
+                assert_eq!(Pool::get_prev_raw_from_raw(&next), cur_ptr);
+                prev = cur_ptr;
+                res
+            }),
+            "Pool pointers laid out in sorted order invariant broken"
+        );
+    }
+
+    fn nf_add_pool(&mut self, pool: &mut Pool) {
+        let this_pool_addr = std::ptr::addr_of_mut!(*pool);
+
+        // CASES possible
+        // 1) There's just the pool_head in pool. It'll be pointing to itself
+        //      1.i) If the pointer value of pool_head is greater than the
+        //      this_pool_addr pointer, it'll be inserted after the pool_head correctly, via
+        //      B1 branch
+        //      1.ii) If the pointer value of pool head is less than this_pool_addr pointer,
+        //      It'll go B3 branch and we'll insert it correctly there
+        //  2) If there's some other pools apart from pool_head
+        //      2.i) B1 will handle the case correctly
+        //      2.ii) B2 will handle the cases of inserting to somewhere in between and at the end
+        //        as well
+        //      2.iii) B3 should never hit in this particular case
+        //
+        //
+
+        let head_next_raw = Pool::get_next_raw_from_raw(&self.get_globals().pool_head);
+
+        if head_next_raw > this_pool_addr {
+            // B1
+            //
+            // Must go right after head then. pool_head never changes
+            Pool::insert_right_after_left(self.get_globals().pool_head, this_pool_addr);
+            return;
+        }
+
+        if let Some(mut it) = self
+            .get_pool_iter()
+            .find(|x| this_pool_addr > x.get_pool().get_next_raw())
+        {
+            //B2
+            Pool::insert_right_after_left(
+                std::ptr::addr_of_mut!(*it.get_pool_mut()),
+                this_pool_addr,
+            );
+        } else {
+            //B3
+            Pool::insert_right_after_left(self.get_globals().pool_head, this_pool_addr);
+        }
     }
 
     fn nf_add_block(&mut self, val: Value) {
@@ -334,6 +435,7 @@ static mut GLOBAL_ALLOC: NfAllocator = NfAllocator {
         nf_head: Value(0),
         nf_prev: Value(0),
         nf_last: Value(0),
+        pool_head: std::ptr::null_mut(),
     },
     #[cfg(debug_assertions)]
     last_expandheap_start_end: (0usize, 0usize),
@@ -343,9 +445,11 @@ static mut GLOBAL_ALLOC: NfAllocator = NfAllocator {
 pub fn get_global_allocator() -> &'static mut NfAllocator {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| unsafe {
+        GLOBAL_ALLOC.globals.cur_wsz = NfGlobals::get().cur_wsz;
         GLOBAL_ALLOC.globals.nf_head = NfGlobals::get().nf_head;
         GLOBAL_ALLOC.globals.nf_prev = NfGlobals::get().nf_prev;
         GLOBAL_ALLOC.globals.nf_last = NfGlobals::get().nf_last;
+        GLOBAL_ALLOC.globals.pool_head = NfGlobals::get().pool_head;
     });
 
     unsafe { &mut GLOBAL_ALLOC }
