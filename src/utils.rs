@@ -1,6 +1,6 @@
 use std::{alloc::Layout, env};
 
-use crate::{header::Header, value::Value, word::Wsize};
+use crate::{freelist::pool::Pool, header::Header, value::Value, word::Wsize};
 
 #[cfg(target_pointer_width = "16")]
 static ALIGN: usize = 2usize;
@@ -56,6 +56,10 @@ pub fn get_layout(mem_size: Wsize) -> std::alloc::Layout {
 #[inline(always)]
 pub fn get_layout_and_actual_expansion_size(mut request_wo_sz: Wsize) -> (Layout, Wsize) {
     request_wo_sz = get_actual_wosz_to_request(request_wo_sz);
+    assert!(
+        request_wo_sz >= Wsize::from_bytesize(std::mem::size_of::<Pool>()),
+        "The request size should be greater than the Pool struct size"
+    );
 
     let layout = get_layout(request_wo_sz);
     (layout, Wsize::from_bytesize(layout.size()))
@@ -64,6 +68,11 @@ pub fn get_layout_and_actual_expansion_size(mut request_wo_sz: Wsize) -> (Layout
 #[inline(always)]
 pub fn get_header_mut(ptr: &mut *mut u8) -> &mut Header {
     unsafe { &mut *(*ptr as *mut Header) }
+}
+
+#[inline(always)]
+pub fn get_pool_mut(ptr: &mut *mut u8) -> &mut Pool {
+    unsafe { &mut *(*ptr as *mut Pool) }
 }
 
 #[inline(always)]
@@ -100,14 +109,21 @@ macro_rules! hd_bp {
 #[macro_export]
 macro_rules! hp_val {
     ($val: expr) => {
-        unsafe { &mut *($val.0 as *mut Header).sub(1) }
+        &mut *($val.0 as *mut Header).wrapping_sub(1)
+    };
+}
+
+#[macro_export]
+macro_rules! pool_val {
+    ($val: expr) => {
+        &mut *(field_val($val, -4).0 as *mut Pool)
     };
 }
 
 #[macro_export]
 macro_rules! val_hp {
     ($hp: expr) => {
-        unsafe { Value(($hp as *mut Header).add(1) as usize) }
+        Value(($hp as *mut Header).wrapping_add(1) as usize)
     };
 }
 
@@ -115,7 +131,7 @@ macro_rules! val_hp {
 pub fn field_ref_mut(val: &Value, index: isize) -> &mut Value {
     let val_as_mut_value = val.0 as *mut Value;
 
-    let offs = unsafe { val_as_mut_value.offset(index) };
+    let offs = val_as_mut_value.wrapping_offset(index);
 
     unsafe { &mut *offs }
 }
@@ -125,9 +141,27 @@ pub fn field_val(val: Value, index: isize) -> Value {
     let val_as_ptr = val.0 as *mut Value;
 
     let offs = val_as_ptr.wrapping_offset(index);
-    // let offs = unsafe { val_as_ptr.offset(index) };
 
     Value(offs as usize)
+}
+
+#[cfg(not(feature = "no_merge"))]
+pub fn try_merge(prev: Value, cur: Value) -> bool {
+    use crate::{colors::CAML_BLUE, DEFAULT_TAG};
+
+    let prev_wosz = prev.get_header().get_wosize();
+    let prev_next_val = field_val(prev, (*prev_wosz.get_val()) as _);
+    if prev_next_val == field_val(cur, -1) {
+        *prev.get_header() = Header::new(
+            *prev_wosz.get_val() + whsize_wosize(cur.get_header().get_wosize()).get_val(),
+            CAML_BLUE,
+            DEFAULT_TAG,
+        );
+        *get_next(&prev) = *get_next(&cur);
+        true
+    } else {
+        false
+    }
 }
 
 #[test]

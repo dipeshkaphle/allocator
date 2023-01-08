@@ -1,16 +1,15 @@
 #![allow(clippy::mut_from_ref)]
 mod colors;
-mod free_list;
+mod freelist;
 mod header;
 mod utils;
 mod value;
 mod word;
 
+use freelist::allocator::get_global_allocator;
 use utils::field_val;
 use value::{Value, VAL_NULL};
 use word::Wsize;
-
-use crate::free_list::get_global_allocator;
 
 pub const DEFAULT_COLOR: colors::Color = colors::CAML_BLUE;
 pub const DEFAULT_TAG: u8 = 0;
@@ -21,6 +20,7 @@ static mut MEM_RANGES: Vec<(usize, usize)> = vec![];
 #[no_mangle]
 pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
     let mut mem = get_global_allocator().nf_allocate(Wsize::new(wo_sz as usize));
+    // get_global_allocator().get_globals().
 
     #[cfg(feature = "check_invariants")]
     get_global_allocator().verify_nf_last_invariant();
@@ -82,9 +82,8 @@ mod tests {
 
     use crate::{
         alloc, dealloc,
-        free_list::{get_global_allocator, FreeList},
+        freelist::{allocator::get_global_allocator, fl::FreeList},
         utils::whsize_wosize,
-        value::Val,
     };
 
     #[test]

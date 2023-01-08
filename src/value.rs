@@ -8,19 +8,14 @@ use crate::{
     utils::{field_val, get_next},
 };
 
-pub trait Val {
-    fn get_header(&self) -> &mut Header;
-    fn get_bp(&self) -> *mut u8;
-}
-
 pub const VAL_NULL: Value = Value(0);
 
 #[derive(PartialEq, Eq, PartialOrd, Clone, Copy)]
 #[repr(transparent)]
 pub struct Value(pub usize);
 
-impl Val for Value {
-    fn get_header(&self) -> &mut Header {
+impl Value {
+    pub fn get_header(&self) -> &mut Header {
         #[cfg(debug_assertions)]
         assert_ne!(*self, VAL_NULL, "Value is null, can't get header");
 
@@ -29,7 +24,7 @@ impl Val for Value {
         hd_bp!(bp.0 as *mut u8)
     }
 
-    fn get_bp(&self) -> *mut u8 {
+    pub fn get_bp(&self) -> *mut u8 {
         bp_val!(*self)
     }
 }

@@ -1,14 +1,20 @@
-use std::{alloc::Layout, sync::Once};
+use std::alloc::Layout;
 
 use crate::{
     colors::{CAML_BLACK, CAML_BLUE},
+    freelist::{fl::FreeList, pool::Pool},
     header::Header,
-    utils::{self, field_val, get_header_mut, get_next, val_bp, whsize_wosize, wosize_whsize},
+    utils::{
+        self, field_val, get_header_mut, get_next, get_pool_mut, val_bp, whsize_wosize,
+        wosize_whsize,
+    },
     val_hp,
-    value::{Val, Value, VAL_NULL},
+    value::{Value, VAL_NULL},
     word::Wsize,
     DEFAULT_TAG,
 };
+
+use super::globals::{NfGlobals, SentinelType};
 
 pub struct NfAllocator {
     globals: NfGlobals,
@@ -158,11 +164,19 @@ impl NfAllocator {
             "Heap expansion never failing invariant failed"
         );
 
-        *get_header_mut(&mut mem_hd) =
-            Header::new(no_of_words_in_layout.get_val() - 1, CAML_BLUE, 0);
+        let pool = get_pool_mut(&mut mem_hd);
+        pool.pool_wo_sz = no_of_words_in_layout;
+        pool.next = std::ptr::null_mut();
+        pool.hd = Header::new(
+            // Should have size = no_of_words_in_layout - sizeof(Pool) + 1 word(considering the first_field field)
+            *Pool::get_field_wosz_from_pool_wosz(no_of_words_in_layout).get_val(),
+            CAML_BLUE,
+            DEFAULT_TAG,
+        );
 
-        let mem_hd = mem_hd as *mut Header;
-        val_hp!(mem_hd)
+        // field_val(val_bp(mem_hd), 4) would also work, it's guaranteed to be at  4th index since
+        // we're using repr(C)
+        Value(std::ptr::addr_of_mut!(pool.first_field) as usize)
     }
 
     pub fn nf_expand_heap(&mut self, request_wo_sz: Wsize) {
@@ -175,7 +189,10 @@ impl NfAllocator {
         #[cfg(debug_assertions)]
         {
             let hp_as_usize = field_val(memory, -1).0;
-            self.last_expandheap_start_end = (hp_as_usize, hp_as_usize + no_of_bytes_in_layout);
+            self.last_expandheap_start_end = (
+                hp_as_usize,
+                hp_as_usize + memory.get_header().get_wosize().to_bytesize(),
+            );
         }
 
         self.num_of_heap_expansions += 1;
@@ -225,7 +242,7 @@ impl NfAllocator {
 
     #[cfg(not(feature = "no_merge"))]
     fn merge_and_update_global(&mut self, left: Value, right: Value) {
-        let merged = try_merge(left, right);
+        let merged = utils::try_merge(left, right);
         if merged {
             if self.get_globals().nf_last == right {
                 self.get_globals().nf_last = left;
@@ -311,151 +328,6 @@ impl NfAllocator {
     }
 }
 
-#[repr(C)]
-pub struct SentinelType {
-    filler1: Value,
-    h: Header,
-    first_field: Value,
-    filler2: Value,
-}
-
-static mut SENTINEL: SentinelType = SentinelType {
-    filler1: Value(0),
-    h: Header::new(0, CAML_BLUE, 0),
-    first_field: VAL_NULL,
-    filler2: Value(0),
-};
-
-#[derive(Debug)]
-pub struct NfGlobals {
-    cur_wsz: Wsize,
-    nf_head: Value,
-    nf_prev: Value,
-    nf_last: Value,
-    // Doing get_next on this nf_head, nf_prev and nf_head should always be valid, this is to be maintained
-}
-
-impl NfGlobals {
-    #[inline(always)]
-    fn get() -> &'static mut Self {
-        static mut NF_GLOBAL: NfGlobals = NfGlobals {
-            cur_wsz: Wsize::new(0),
-            nf_head: Value(0),
-            nf_prev: Value(0),
-            nf_last: Value(0),
-        };
-
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            unsafe {
-                NF_GLOBAL.nf_head = val_bp(std::ptr::addr_of_mut!(SENTINEL.first_field) as *mut u8);
-                NF_GLOBAL.nf_last = NF_GLOBAL.nf_head;
-                NF_GLOBAL.nf_prev = NF_GLOBAL.nf_head;
-            };
-        });
-
-        unsafe { &mut NF_GLOBAL }
-    }
-}
-
-#[derive(Debug)]
-pub struct FreeList<'a> {
-    globals: &'a mut NfGlobals,
-}
-
-impl FreeList<'_> {
-    pub fn nf_iter(&mut self) -> NfIter<'_> {
-        // NfIter::new(self)
-        let prev = self.globals.nf_prev;
-        NfIter {
-            globals: self.globals,
-            prev,
-            visited_start_once: false,
-        }
-    }
-    pub fn new(g: &mut NfGlobals) -> FreeList {
-        FreeList { globals: g }
-    }
-
-    fn find_next(&mut self, wo_sz: Wsize) -> Option<NfIterVal> {
-        self.nf_iter()
-            .find(|e| e.get_cur().get_header().get_wosize().get_val() >= wo_sz.get_val())
-    }
-}
-
-pub struct NfIter<'a> {
-    globals: &'a mut NfGlobals,
-    prev: Value,
-    visited_start_once: bool,
-}
-
-impl NfIter<'_> {
-    fn get_globals(&self) -> &NfGlobals {
-        self.globals
-    }
-}
-
-#[derive(Debug)]
-pub struct NfIterVal {
-    prev: Value,
-    cur: Value,
-    prev_is_sentinel: bool,
-}
-impl NfIterVal {
-    #[inline(always)]
-    pub fn get_cur(&self) -> Value {
-        self.cur
-    }
-    #[inline(always)]
-    pub fn get_prev(&self) -> Value {
-        if !self.prev_is_sentinel {
-            return self.prev;
-        }
-        VAL_NULL
-    }
-
-    // This is not public, can only be used within this module
-    // We would want to call this when we're changing the next value for prev that is generated by
-    // iterator.
-    // This is used in NfAllocator::nf_allocate_block ,NfAllocator::nf_add_block and
-    // NfAllocator::nf_deallocate
-    #[inline(always)]
-    fn get_actual_prev(&self) -> Value {
-        self.prev
-    }
-}
-
-impl Iterator for NfIter<'_> {
-    type Item = NfIterVal; // (prev, cur)
-    fn next(&mut self) -> Option<Self::Item> {
-        let cur = self.prev;
-        let next = *get_next(&cur);
-
-        if self.prev == self.get_globals().nf_prev && self.visited_start_once {
-            None
-        } else {
-            self.visited_start_once = true;
-            if next == VAL_NULL {
-                self.prev = self.get_globals().nf_head;
-                return self.next();
-            }
-
-            #[cfg(feature = "check_invariants")]
-            assert_eq!(
-                next.get_header().get_color(),
-                CAML_BLUE,
-                "FreeList entry pointing to a non free list value. Invariant failed",
-            );
-            self.prev = next;
-            Some(Self::Item {
-                prev: cur,
-                cur: next,
-                prev_is_sentinel: cur == self.get_globals().nf_head,
-            })
-        }
-    }
-}
-
 static mut GLOBAL_ALLOC: NfAllocator = NfAllocator {
     globals: NfGlobals {
         cur_wsz: Wsize::new(0),
@@ -477,149 +349,4 @@ pub fn get_global_allocator() -> &'static mut NfAllocator {
     });
 
     unsafe { &mut GLOBAL_ALLOC }
-}
-
-#[cfg(not(feature = "no_merge"))]
-fn try_merge(prev: Value, cur: Value) -> bool {
-    let prev_wosz = prev.get_header().get_wosize();
-    let prev_next_val = field_val(prev, (*prev_wosz.get_val()) as _);
-    if prev_next_val == field_val(cur, -1) {
-        *prev.get_header() = Header::new(
-            *prev_wosz.get_val() + whsize_wosize(cur.get_header().get_wosize()).get_val(),
-            CAML_BLUE,
-            DEFAULT_TAG,
-        );
-        *get_next(&prev) = *get_next(&cur);
-        true
-    } else {
-        false
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{
-        colors::CAML_BLUE,
-        header::Header,
-        hp_val,
-        utils::{self, whsize_wosize},
-        val_hp,
-        value::Val,
-        value::Value,
-        word::Wsize,
-    };
-
-    use super::{FreeList, NfAllocator};
-
-    #[test]
-    fn allocate_for_heap_expansion_test() {
-        let request_wo_sz = 1024;
-        let layout = utils::get_layout(Wsize::new(request_wo_sz));
-        let memory = NfAllocator::allocate_for_heap_expansion(&layout);
-        assert_eq!(
-            memory.get_header().get_wosize(),
-            Wsize::new(request_wo_sz - 1)
-        );
-        assert_eq!(memory.get_header().get_color(), CAML_BLUE);
-        unsafe { std::alloc::dealloc(hp_val!(memory) as *mut Header as *mut u8, layout) };
-    }
-
-    #[test]
-    fn test() {
-        let mut allocator = NfAllocator::new();
-
-        // nothing present in freelist
-        assert!(FreeList::new(allocator.get_globals()).nf_iter().count() == 0);
-
-        let intended_expansion_size = Wsize::new(1024 * 1024); // Expand the heap with a chunk of size
-                                                               // 1024*1024 words i.e (1024**2) *
-                                                               // WORD_SIZE bytes
-
-        let (layout, _actual_expansion_size) =
-            utils::get_layout_and_actual_expansion_size(intended_expansion_size);
-
-        let actual_expansion_size = Wsize::from_bytesize(layout.size());
-
-        // nf_expand_heap heap will actually allocate for size=actual_expansion_size instead of
-        // intended_expansion_size
-        allocator.nf_expand_heap(intended_expansion_size);
-
-        assert_eq!(allocator.get_globals().cur_wsz, actual_expansion_size);
-
-        // 1 chunk is present in freelist after expansion
-        assert!(FreeList::new(allocator.get_globals()).nf_iter().count() == 1);
-
-        let mut allocations = vec![
-            Some(allocator.nf_allocate(Wsize::new(1024))), // allocates 1024 + 1 word
-            Some(allocator.nf_allocate(Wsize::new(1024))), // allocates 1024 + 1 word
-        ];
-
-        // initial size -(1024 + 1 word( ret by whsize_wosize) allocated twice)
-        let cur_wsz = actual_expansion_size - ((whsize_wosize(Wsize::new(1024))) * 2);
-
-        assert_eq!(allocator.get_globals().cur_wsz, cur_wsz);
-
-        let to_be_freed = allocations.get_mut(0).unwrap().take().unwrap();
-        assert!(allocations.get(0).unwrap().is_none());
-
-        let allocatable_memory_left = FreeList::new(allocator.get_globals())
-            .nf_iter()
-            .fold(Wsize::new(0), |acc, x| {
-                acc + x.get_cur().get_header().get_wosize()
-            });
-
-        //The following allocation will force the empty block case in nf_allocate_block
-        let hp = allocator.nf_allocate(allocatable_memory_left - Wsize::new(1));
-
-        assert_eq!(
-            val_hp!(hp).get_header().get_wosize(),
-            allocatable_memory_left - Wsize::new(1)
-        );
-        //Assert the size of empty block that lies 1 word before hp
-        assert_eq!(
-            Value(hp as usize).get_header().get_wosize(), // treat hp as val, it'll treat empty
-            // block as it's header
-            Wsize::new(0)
-        );
-        allocations.push(Some(hp));
-
-        // This must've made the free list empty
-        assert_eq!(allocator.get_globals().cur_wsz, Wsize::new(0));
-        assert_eq!(
-            FreeList::new(allocator.get_globals())
-                .nf_iter()
-                .fold(Wsize::new(0), |acc, x| {
-                    acc + x.get_cur().get_header().get_wosize()
-                }),
-            Wsize::new(0)
-        );
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 0);
-
-        // Freeing the first allocation
-        let to_be_freed_header = val_hp!(to_be_freed).get_header().clone();
-        allocator.nf_deallocate(val_hp!(to_be_freed));
-
-        assert_eq!(
-            allocator.get_globals().cur_wsz,
-            to_be_freed_header.get_wosize() + Wsize::new(1)
-        );
-
-        let allocatable_memory_left = to_be_freed_header.get_wosize();
-
-        FreeList::new(allocator.get_globals()).nf_iter().count();
-
-        // Allocating exactly allocatable_memory_left will again empty the freelist
-        let hp = allocator.nf_allocate(allocatable_memory_left);
-
-        assert_ne!(hp, std::ptr::null_mut());
-        assert_eq!(allocator.get_globals().cur_wsz, Wsize::new(0));
-        assert_eq!(
-            FreeList::new(allocator.get_globals())
-                .nf_iter()
-                .fold(Wsize::new(0), |acc, x| {
-                    acc + x.get_cur().get_header().get_wosize()
-                }),
-            Wsize::new(0)
-        );
-    }
 }
