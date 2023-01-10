@@ -457,7 +457,7 @@ impl NfAllocator {
 
         let mut sweeped_wsz = Wsize::new(0);
 
-        let mut last_free_block = Value(0);
+        let mut last_free_block = self.get_globals().nf_head;
         let mut last_empty_val = Value(0);
 
         //
@@ -475,6 +475,12 @@ impl NfAllocator {
                 }
                 CAML_WHITE => {
                     // Dead
+
+                    // last_free_block is always something in which get_next is valid
+                    // If the first block we encounter itself is CAML_WHITE, the get_next call in
+                    // B1 branch in nf_merge is valid and we won't ever get inside it because the
+                    // last_free_block is currently nf_head, whose next value is first free list
+                    // entry and wont ever be adjacent to next_in_mem of cur_val
                     sweeped_wsz += whsize_wosize(cur_val.get_header().get_wosize());
                     self.nf_merge(cur_val, &mut last_empty_val, &mut last_free_block);
                 }
@@ -496,6 +502,7 @@ impl NfAllocator {
     ) {
         self.get_globals_mut().cur_wsz += whsize_wosize(cur_val.get_header().get_wosize());
 
+        // [B1]
         // If last_empty_hp is adjacent to cur
         if std::ptr::eq(bp_val!(last_empty_val), hp_val!(cur_val) as _) {
             self.get_globals_mut().cur_wsz += whsize_wosize(Wsize::new(0)); //to account for the empty
@@ -508,6 +515,7 @@ impl NfAllocator {
             cur_val = *last_empty_val;
         }
 
+        // [B2]
         // get_next on last_free_block is safe because we've made sure in nf_sweep that it has
         // BLUE color
         if *get_next(last_free_block) == cur_val.get_next_from_size() {
@@ -517,18 +525,24 @@ impl NfAllocator {
                 *(cur_val.get_header().get_wosize()
                     + whsize_wosize(next_free_block.get_header().get_wosize()))
                 .get_val(),
-                CAML_WHITE,
+                CAML_BLUE,
                 DEFAULT_TAG,
             );
 
-            if cur_val == self.get_globals().nf_prev {
-                self.get_globals_mut().nf_prev = cur_val;
+            // Change last_free_block's next correctly
+            *get_next(last_free_block) = *get_next(&next_free_block);
+
+            // The nf_prev and nf_last wont ever point to nf_head because only way we get here is
+            // if our condition holds. The condition can never hold for last_free_block == nf_head
+            if next_free_block == self.get_globals().nf_prev {
+                self.get_globals_mut().nf_prev = *last_free_block;
             }
-            if cur_val == self.get_globals().nf_last {
-                self.get_globals_mut().nf_last = cur_val;
+            if next_free_block == self.get_globals().nf_last {
+                self.get_globals_mut().nf_last = *last_free_block;
             }
         }
 
+        // [B3]
         if last_free_block.get_next_from_size() == cur_val {
             *last_free_block.get_header() = Header::new(
                 *(last_free_block.get_header().get_wosize()
@@ -538,6 +552,7 @@ impl NfAllocator {
                 DEFAULT_TAG,
             );
         } else if cur_val.get_header().get_wosize() != Wsize::new(0) {
+            // [B4]
             *cur_val.get_header() = Header::new(
                 *cur_val.get_header().get_wosize().get_val(),
                 CAML_BLUE,
@@ -547,6 +562,7 @@ impl NfAllocator {
             *get_next(last_free_block) = cur_val;
             *last_free_block = cur_val;
         } else {
+            // [B5]
             self.get_globals_mut().cur_wsz -= whsize_wosize(Wsize::new(0));
             *last_empty_val = cur_val;
         }

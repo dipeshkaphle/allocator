@@ -226,5 +226,92 @@ mod tests {
 
         assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
         assert_eq!(allocator.get_globals().cur_wsz, initial_cur_wsz);
+
+        // Preparing for 2nd sweep
+        //
+        // Allocating and marking some nodes white this time(not all of it)
+
+        allocation_sizes = vec![];
+        allocated_values = vec![];
+
+        allocation_sizes.push(Wsize::new(20));
+        allocation_sizes.push(Wsize::new(30));
+        allocation_sizes.push(Wsize::new(40));
+        allocation_sizes.push(Wsize::new(50));
+
+        for sz in &allocation_sizes {
+            allocated_values.push(val_hp!(allocator.nf_allocate(*sz)));
+        }
+
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        // we'll mark two values as unreachable
+        //
+        // allocated_values[0] and allocated_values[2]
+
+        let hd = allocated_values.get_mut(0).unwrap().get_header().clone();
+        *allocated_values.get_mut(0).unwrap().get_header() =
+            Header::new(*hd.get_wosize().get_val(), CAML_WHITE, hd.get_tag());
+
+        let hd = allocated_values.get_mut(2).unwrap().get_header().clone();
+        *allocated_values.get_mut(2).unwrap().get_header() =
+            Header::new(*hd.get_wosize().get_val(), CAML_WHITE, hd.get_tag());
+
+        allocator.nf_sweep();
+
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 3);
+        assert_eq!(
+            allocator.get_globals().cur_wsz,
+            initial_cur_wsz
+                - whsize_wosize(*allocation_sizes.get(1).unwrap())
+                - whsize_wosize(*allocation_sizes.get(3).unwrap())
+        );
+
+        // Heap right now is something like this
+        // FFFF****FFFF****FFFF
+        // where,
+        // * -> Not Free
+        // F -> Free
+        //
+        //let allocs = allocated_values vector
+        //
+        //
+        // Freeing allocs[1] will make the free list something like this
+        // FFFF****FFFFFFFFFF
+        // It should force a merge
+        // To free allocs[1], we'll make allocs[3] black,allocs[1] is already white after the last
+        // sweep
+        let hd = allocated_values.get_mut(3).unwrap().get_header().clone();
+        *allocated_values.get_mut(3).unwrap().get_header() =
+            Header::new(*hd.get_wosize().get_val(), CAML_BLACK, hd.get_tag());
+
+        allocator.nf_sweep();
+
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 2);
+        assert_eq!(
+            allocator.get_globals().cur_wsz,
+            initial_cur_wsz - whsize_wosize(*allocation_sizes.get(3).unwrap())
+        );
+
+        let mut last = Value(0);
+        for ele in FreeList::new(allocator.get_globals()).nf_iter() {
+            last = ele.get_cur();
+        }
+
+        // Manually changing the globals to test that nf_sweep assigns them properly
+        allocator.get_globals_mut().nf_prev = last;
+        allocator.get_globals_mut().nf_last = last;
+
+        allocator.nf_sweep();
+
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(allocator.get_globals().cur_wsz, initial_cur_wsz);
+        // let only_val_in_fl = FreeList::new(allocator.get_globals())
+        // .nf_iter()
+        // .next()
+        // .unwrap()
+        // .get_cur();
+
+        // assert_eq!(allocator.get_globals().nf_prev, only_val_in_fl);
+        // assert_eq!(allocator.get_globals().nf_last, only_val_in_fl);
     }
 }
