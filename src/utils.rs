@@ -1,6 +1,6 @@
 use std::{alloc::Layout, env};
 
-use crate::{freelist::pool::Pool, header::Header, value::Value, word::Wsize};
+use crate::{colors::CAML_BLUE, freelist::pool::Pool, header::Header, value::Value, word::Wsize};
 
 #[cfg(target_pointer_width = "16")]
 static ALIGN: usize = 2usize;
@@ -75,9 +75,25 @@ pub fn get_pool_mut(ptr: &mut *mut u8) -> &mut Pool {
     unsafe { &mut *(*ptr as *mut Pool) }
 }
 
+// This gives next value by reading the content from memory. The call to this function is only
+// defined values which are free
 #[inline(always)]
 pub fn get_next(cur: &Value) -> &mut Value {
+    #[cfg(feature = "check_invariants")]
+    assert_eq!(
+        cur.get_header().get_color(),
+        CAML_BLUE,
+        "get_next called on value whose color isn't BLUE"
+    );
     field_ref_mut(cur, 0)
+}
+
+#[inline(always)]
+pub fn next_in_mem(cur: &Value) -> Value {
+    field_val(
+        *cur,
+        *whsize_wosize(cur.get_header().get_wosize()).get_val() as isize,
+    )
 }
 
 #[inline(always)]
@@ -92,7 +108,7 @@ pub fn wosize_whsize(wsz: Wsize) -> Wsize {
 #[macro_export]
 macro_rules! bp_val {
     ($v: expr) => {
-        ($v.0 as *mut Value) as *mut u8
+        $v.0 as *mut u8
     };
 }
 pub fn val_bp(p: *mut u8) -> Value {
@@ -107,9 +123,16 @@ macro_rules! hd_bp {
 }
 
 #[macro_export]
+macro_rules! hd_hp {
+    ($ptr:expr) => {
+        unsafe { &mut *$ptr }
+    };
+}
+
+#[macro_export]
 macro_rules! hp_val {
     ($val: expr) => {
-        &mut *($val.0 as *mut Header).wrapping_sub(1)
+        ($val.0 as *mut Header).wrapping_sub(1)
     };
 }
 

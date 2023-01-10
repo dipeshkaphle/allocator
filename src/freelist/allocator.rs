@@ -1,13 +1,15 @@
 use std::alloc::Layout;
 
 use crate::{
-    colors::{CAML_BLACK, CAML_BLUE},
+    bp_val,
+    colors::{CAML_BLACK, CAML_BLUE, CAML_GRAY, CAML_WHITE},
     freelist::{fl::FreeList, pool::Pool},
+    hd_hp,
     header::Header,
-    pool_val,
+    hp_val, pool_val,
     utils::{
-        self, field_val, get_header_mut, get_next, get_pool_mut, val_bp, whsize_wosize,
-        wosize_whsize,
+        self, field_val, get_header_mut, get_next, get_pool_mut, next_in_mem, val_bp,
+        whsize_wosize, wosize_whsize,
     },
     val_hp,
     value::{Value, VAL_NULL},
@@ -65,16 +67,24 @@ impl NfAllocator {
         }
     }
 
-    pub fn get_pool_iter(&mut self) -> PoolIter {
+    pub fn get_pool_iter(&self) -> PoolIter {
         // at all times pool_head will point to valid pool(the global one with static lifetime or
         // the one gotten through Box::leak)
-        PoolIter::new(&mut self.get_globals().pool_head)
+        PoolIter::new(&self.get_globals().pool_head)
     }
 
     #[inline(always)]
-    pub fn get_globals(&mut self) -> &mut NfGlobals {
+    pub fn get_globals_mut(&mut self) -> &mut NfGlobals {
         &mut self.globals
     }
+    #[inline(always)]
+    pub fn get_globals(&self) -> &NfGlobals {
+        &self.globals
+    }
+    // #[inline(always)]
+    // pub fn get_globals(&mut self) -> &mut NfGlobals {
+    // &mut self.globals
+    // }
     #[inline(always)]
     #[cfg(debug_assertions)]
     pub fn get_start_end_after_heap_expand(&self) -> (usize, usize) {
@@ -126,18 +136,22 @@ impl NfAllocator {
             // and it will forever create a gap which wont be merged.
             //
 
-            self.get_globals().cur_wsz -= whsize_wosize(cur.get_header().get_wosize());
+            self.get_globals_mut().cur_wsz -= whsize_wosize(cur.get_header().get_wosize());
             *get_next(&prev) = *get_next(&cur);
-            *cur.get_header() = Header::new(0, CAML_BLUE, 0);
+            *cur.get_header() = Header::new(0, CAML_WHITE, 0); // This will be overwritten if it
+                                                               // was given wrong header, else
+                                                               // this'll be the empty block(which
+                                                               // is rightly always
+                                                               // unreachable(CAML_WHITE))
 
             // If the pointer we returned was nf_last, we change nf_last
             // This way we're always keeping track of nf_last properly
             if cur == self.get_globals().nf_last {
-                self.get_globals().nf_last = prev;
+                self.get_globals_mut().nf_last = prev;
                 *get_next(&self.get_globals().nf_last) = VAL_NULL;
             }
         } else {
-            self.get_globals().cur_wsz -= wh_sz;
+            self.get_globals_mut().cur_wsz -= wh_sz;
             *cur.get_header() = Header::new(
                 cur.get_header().get_wosize().get_val() - wh_sz.get_val(),
                 CAML_BLUE,
@@ -159,7 +173,7 @@ impl NfAllocator {
         let val = field_val(cur, offset + 1);
         *val.get_header() = Header::new(*wosize_whsize(wh_sz).get_val(), CAML_BLACK, 0);
 
-        self.get_globals().nf_prev = prev;
+        self.get_globals_mut().nf_prev = prev;
 
         field_val(cur, offset).0 as *mut Header
     }
@@ -196,7 +210,7 @@ impl NfAllocator {
         pool.prev = std::ptr::addr_of_mut!(*pool);
         pool.hd = Header::new(
             // Should have size = no_of_words_in_layout - sizeof(Pool) + 1 word(considering the first_field field)
-            *Pool::get_field_wosz_from_pool_wosz(no_of_words_in_layout).get_val(),
+            *Pool::get_header_size_from_pool_wo_sz(no_of_words_in_layout).get_val(),
             CAML_BLUE,
             DEFAULT_TAG,
         );
@@ -306,12 +320,12 @@ impl NfAllocator {
         let it = FreeList::new(self.get_globals())
             .nf_iter()
             .find(|e| e.get_cur() > val && e.get_prev() < val);
-        self.get_globals().cur_wsz += whsize_wosize(val.get_header().get_wosize());
+        self.get_globals_mut().cur_wsz += whsize_wosize(val.get_header().get_wosize());
         match it {
             None => {
                 // means its the last most address
                 *get_next(&self.get_globals().nf_last) = val;
-                self.get_globals().nf_last = val;
+                self.get_globals_mut().nf_last = val;
                 *get_next(&self.get_globals().nf_last) = VAL_NULL;
             }
             Some(it) => {
@@ -346,16 +360,16 @@ impl NfAllocator {
         let merged = utils::try_merge(left, right);
         if merged {
             if self.get_globals().nf_last == right {
-                self.get_globals().nf_last = left;
+                self.get_globals_mut().nf_last = left;
             }
             if self.get_globals().nf_prev == right {
-                self.get_globals().nf_prev = left;
+                self.get_globals_mut().nf_prev = left;
             }
         }
     }
 
     pub fn nf_deallocate(&mut self, val: Value) {
-        self.get_globals().cur_wsz += whsize_wosize(val.get_header().get_wosize());
+        self.get_globals_mut().cur_wsz += whsize_wosize(val.get_header().get_wosize());
 
         // let nf_head = self.get_globals().nf_head;
         // let nf_last = self.get_globals().nf_last;
@@ -369,7 +383,7 @@ impl NfAllocator {
         if val > self.get_globals().nf_last {
             let prev = self.get_globals().nf_last;
             *get_next(&self.get_globals().nf_last) = val;
-            self.get_globals().nf_last = val;
+            self.get_globals_mut().nf_last = val;
 
             #[cfg(not(feature = "no_merge"))]
             self.merge_and_update_global(prev, val);
@@ -392,7 +406,7 @@ impl NfAllocator {
             } else {
                 // We must set nf_last to be val as *get_next( nf_head) == VAL_NULL => the list was
                 // empty. Must change nf_last
-                self.get_globals().nf_last = val;
+                self.get_globals_mut().nf_last = val;
                 *get_next(&self.get_globals().nf_last) = VAL_NULL;
             }
             return;
@@ -425,6 +439,116 @@ impl NfAllocator {
                 " \n\n===> Dellocation Request for: {val:?}\n Globals: {:?}\n",
                 self.get_globals(),
             );
+        }
+    }
+
+    pub fn nf_sweep(&mut self) {
+        let all_pools = self.get_pool_iter().collect::<Vec<PoolIterVal>>();
+        let mut work_done = vec![];
+
+        for mut it in all_pools {
+            work_done.push(self.sweep(it.get_pool_mut()));
+        }
+    }
+
+    fn sweep(&mut self, pool: &mut Pool) -> Wsize {
+        let mut cur_hp = std::ptr::addr_of_mut!(pool.hd);
+        let limit = std::ptr::addr_of!(*pool) as usize + pool.pool_wo_sz.to_bytesize();
+
+        let mut sweeped_wsz = Wsize::new(0);
+
+        let mut last_free_block = Value(0);
+        let mut last_empty_val = Value(0);
+
+        //
+        while (cur_hp as usize) < limit {
+            let cur_hd = hd_hp!(cur_hp);
+            let cur_val = val_hp!(cur_hp);
+            match cur_hd.get_color() {
+                CAML_BLACK => {
+                    // Live
+                    *cur_hd = Header::new(
+                        *cur_hd.get_wosize().get_val(),
+                        CAML_WHITE, // Black -> White
+                        cur_hd.get_tag(),
+                    );
+                }
+                CAML_WHITE => {
+                    // Dead
+                    sweeped_wsz += whsize_wosize(cur_val.get_header().get_wosize());
+                    self.nf_merge(cur_val, &mut last_empty_val, &mut last_free_block);
+                }
+                CAML_BLUE => {
+                    // In free list
+                    last_free_block = val_hp!(cur_hp);
+                }
+                _ => unreachable!("Nothing should have Gray color in sweep phase"),
+            }
+            cur_hp = hp_val!(cur_val.get_next_from_size());
+        }
+        sweeped_wsz
+    }
+    fn nf_merge(
+        &mut self,
+        mut cur_val: Value,
+        last_empty_val: &mut Value,
+        last_free_block: &mut Value,
+    ) {
+        self.get_globals_mut().cur_wsz += whsize_wosize(cur_val.get_header().get_wosize());
+
+        // If last_empty_hp is adjacent to cur
+        if std::ptr::eq(bp_val!(last_empty_val), hp_val!(cur_val) as _) {
+            self.get_globals_mut().cur_wsz += whsize_wosize(Wsize::new(0)); //to account for the empty
+                                                                            //block
+            *last_empty_val.get_header() = Header::new(
+                *whsize_wosize(cur_val.get_header().get_wosize()).get_val(),
+                CAML_WHITE, // it's still WHITE, we'll make it BLUE after inserting to fl
+                DEFAULT_TAG,
+            );
+            cur_val = *last_empty_val;
+        }
+
+        // get_next on last_free_block is safe because we've made sure in nf_sweep that it has
+        // BLUE color
+        if *get_next(last_free_block) == cur_val.get_next_from_size() {
+            let next_free_block = *get_next(last_free_block);
+
+            *cur_val.get_header() = Header::new(
+                *(cur_val.get_header().get_wosize()
+                    + whsize_wosize(next_free_block.get_header().get_wosize()))
+                .get_val(),
+                CAML_WHITE,
+                DEFAULT_TAG,
+            );
+
+            if cur_val == self.get_globals().nf_prev {
+                self.get_globals_mut().nf_prev = cur_val;
+            }
+            if cur_val == self.get_globals().nf_last {
+                self.get_globals_mut().nf_last = cur_val;
+            }
+        }
+
+        if last_free_block.get_next_from_size() == cur_val {
+            *last_free_block.get_header() = Header::new(
+                *(last_free_block.get_header().get_wosize()
+                    + whsize_wosize(cur_val.get_header().get_wosize()))
+                .get_val(),
+                CAML_BLUE,
+                DEFAULT_TAG,
+            );
+        } else if cur_val.get_header().get_wosize() != Wsize::new(0) {
+            *cur_val.get_header() = Header::new(
+                *cur_val.get_header().get_wosize().get_val(),
+                CAML_BLUE,
+                DEFAULT_TAG,
+            );
+            *get_next(&cur_val) = *get_next(last_free_block);
+            *get_next(last_free_block) = cur_val;
+            *last_free_block = cur_val;
+        } else {
+            self.get_globals_mut().cur_wsz -= whsize_wosize(Wsize::new(0));
+            *last_empty_val = cur_val;
         }
     }
 }

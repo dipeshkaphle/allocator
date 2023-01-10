@@ -77,6 +77,11 @@ pub extern "C" fn dealloc(bp: *mut u8) {
     get_global_allocator().verify_nf_last_invariant();
 }
 
+#[no_mangle]
+pub extern "C" fn sweep() {
+    get_global_allocator().nf_sweep();
+}
+
 #[cfg(test)]
 mod tests {
 

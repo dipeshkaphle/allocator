@@ -6,7 +6,7 @@ pub mod pool;
 #[cfg(test)]
 mod tests {
     use crate::{
-        colors::CAML_BLUE,
+        colors::{CAML_BLACK, CAML_BLUE, CAML_WHITE},
         freelist::pool::Pool,
         header::Header,
         hp_val, pool_val,
@@ -14,6 +14,7 @@ mod tests {
         val_hp,
         value::Value,
         word::Wsize,
+        DEFAULT_TAG,
     };
 
     use super::{allocator::NfAllocator, fl::FreeList};
@@ -25,7 +26,7 @@ mod tests {
         let memory = NfAllocator::allocate_for_heap_expansion(&layout);
         assert_eq!(
             memory.get_header().get_wosize(),
-            Pool::get_field_wosz_from_pool_wosz(Wsize::new(request_wo_sz))
+            Pool::get_header_size_from_pool_wo_sz(Wsize::new(request_wo_sz))
         );
 
         assert_eq!(memory.get_header().get_color(), CAML_BLUE);
@@ -61,7 +62,7 @@ mod tests {
         allocator.nf_expand_heap(intended_expansion_size);
 
         let pool_leader_wsz =
-            whsize_wosize(Pool::get_field_wosz_from_pool_wosz(actual_expansion_size));
+            whsize_wosize(Pool::get_header_size_from_pool_wo_sz(actual_expansion_size));
         assert_eq!(allocator.get_globals().cur_wsz, pool_leader_wsz,);
 
         // 1 chunk is present in freelist after expansion
@@ -172,5 +173,58 @@ mod tests {
             assert_eq!(allocator.get_pool_iter().count(), pool_block_count);
             allocator.check_pool_list_invariant();
         }
+    }
+
+    #[test]
+    fn sweep_test() {
+        let mut allocator = NfAllocator::new();
+        let _ = allocator.nf_expand_heap(Wsize::new(10)); // This'll add a new pool,
+                                                          // $MIN_EXPANSION_WORSIZE  words will be
+                                                          // malloc'd
+
+        let initial_cur_wsz = allocator.get_globals().cur_wsz;
+        // Allocation 1
+        let mut allocation_sizes = vec![];
+        let mut allocated_values = vec![];
+        let hp = allocator.nf_allocate(Wsize::new(10));
+
+        assert_ne!(hp, std::ptr::null_mut());
+        allocation_sizes.push(Wsize::new(10));
+        let mem = val_hp!(hp);
+        assert_eq!(mem.get_header().get_color(), CAML_BLACK);
+        allocated_values.push(mem);
+
+        // Allocation 2
+        let hp = allocator.nf_allocate(Wsize::new(20));
+        assert_ne!(hp, std::ptr::null_mut());
+        allocation_sizes.push(Wsize::new(20));
+        let mem = val_hp!(hp);
+        assert_eq!(mem.get_header().get_color(), CAML_BLACK);
+        allocated_values.push(mem);
+
+        let wsz_not_in_fl = allocation_sizes
+            .iter()
+            .map(|x| whsize_wosize(*x))
+            .fold(Wsize::new(0), |acc, e| acc + e);
+
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(
+            allocator.get_globals().cur_wsz,
+            initial_cur_wsz - wsz_not_in_fl
+        );
+
+        // This marks all the allocated values as unreachable
+        for val in allocated_values {
+            *val.get_header() = Header::new(
+                *val.get_header().get_wosize().get_val(),
+                CAML_WHITE,
+                DEFAULT_TAG,
+            );
+        }
+
+        allocator.nf_sweep();
+
+        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(allocator.get_globals().cur_wsz, initial_cur_wsz);
     }
 }

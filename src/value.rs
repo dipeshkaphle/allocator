@@ -5,7 +5,7 @@ use crate::{
     colors::CAML_BLUE,
     hd_bp,
     header::Header,
-    utils::{field_val, get_next},
+    utils::{field_val, get_next, next_in_mem},
 };
 
 pub const VAL_NULL: Value = Value(0);
@@ -22,6 +22,11 @@ impl Value {
         let f = field_val(*self, -1);
         let bp = Value(bp_val!(f) as usize);
         hd_bp!(bp.0 as *mut u8)
+    }
+
+    // Just performs pointer addition
+    pub fn get_next_from_size(&self) -> Value {
+        next_in_mem(self)
     }
 
     pub fn get_bp(&self) -> *mut u8 {

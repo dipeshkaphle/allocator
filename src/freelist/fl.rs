@@ -9,7 +9,7 @@ use super::globals::NfGlobals;
 
 #[derive(Debug)]
 pub struct FreeList<'a> {
-    globals: &'a mut NfGlobals,
+    globals: &'a NfGlobals,
 }
 
 impl FreeList<'_> {
@@ -22,7 +22,7 @@ impl FreeList<'_> {
             visited_start_once: false,
         }
     }
-    pub fn new(g: &mut NfGlobals) -> FreeList {
+    pub fn new(g: &NfGlobals) -> FreeList {
         FreeList { globals: g }
     }
 
@@ -33,7 +33,7 @@ impl FreeList<'_> {
 }
 
 pub struct NfIter<'a> {
-    globals: &'a mut NfGlobals,
+    globals: &'a NfGlobals,
     prev: Value,
     visited_start_once: bool,
 }

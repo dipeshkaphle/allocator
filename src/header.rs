@@ -13,8 +13,8 @@ impl Header {
     pub const fn new(size: usize, color: Color, tag: u8) -> Header {
         Header((size << 10) + color + (tag as usize))
     }
-    pub fn get_tag(&self) -> usize {
-        self.0 & 0xff
+    pub fn get_tag(&self) -> u8 {
+        (self.0 & 0xff) as u8
     }
     pub fn get_color(&self) -> Color {
         self.0 & 0b1100000000
