@@ -305,13 +305,13 @@ mod tests {
 
         assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
         assert_eq!(allocator.get_globals().cur_wsz, initial_cur_wsz);
-        // let only_val_in_fl = FreeList::new(allocator.get_globals())
-        // .nf_iter()
-        // .next()
-        // .unwrap()
-        // .get_cur();
+        let only_val_in_fl = FreeList::new(allocator.get_globals())
+            .nf_iter()
+            .next()
+            .unwrap()
+            .get_cur();
 
-        // assert_eq!(allocator.get_globals().nf_prev, only_val_in_fl);
-        // assert_eq!(allocator.get_globals().nf_last, only_val_in_fl);
+        assert_eq!(allocator.get_globals().nf_prev, only_val_in_fl);
+        assert_eq!(allocator.get_globals().nf_last, only_val_in_fl);
     }
 }

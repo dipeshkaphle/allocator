@@ -261,12 +261,20 @@ impl NfAllocator {
                 let cur_ptr = std::ptr::addr_of_mut!(*x.get_pool_mut());
                 let res = prev < cur_ptr;
                 let next = Pool::get_next_raw_from_raw(&cur_ptr);
-                assert_eq!(Pool::get_next_raw_from_raw(&prev), cur_ptr);
-                assert_eq!(Pool::get_prev_raw_from_raw(&next), cur_ptr);
+                assert_eq!(
+                    Pool::get_next_raw_from_raw(&prev),
+                    cur_ptr,
+                    "Linking pools not done correctly"
+                );
+                assert_eq!(
+                    Pool::get_prev_raw_from_raw(&next),
+                    cur_ptr,
+                    "Linking pools not done correctly"
+                );
                 prev = cur_ptr;
                 res
             }),
-            "Pool pointers laid out in sorted order invariant broken"
+            "Pool pointers laid out in sorted order invariant broken",
         );
     }
 
@@ -300,7 +308,7 @@ impl NfAllocator {
 
         if let Some(mut it) = self
             .get_pool_iter()
-            .find(|x| this_pool_addr > x.get_pool().get_next_raw())
+            .find(|x| this_pool_addr < x.get_pool().get_next_raw())
         {
             //B2
             Pool::insert_right_after_left(
@@ -368,9 +376,6 @@ impl NfAllocator {
     pub fn nf_deallocate(&mut self, val: Value) {
         self.get_globals_mut().cur_wsz += whsize_wosize(val.get_header().get_wosize());
 
-        // let nf_head = self.get_globals().nf_head;
-        // let nf_last = self.get_globals().nf_last;
-
         *val.get_header() = Header::new(
             *val.get_header().get_wosize().get_val(),
             CAML_BLUE,
@@ -421,19 +426,8 @@ impl NfAllocator {
                 self.merge_and_update_global(it.get_actual_prev(), val);
             }
         } else {
-            FreeList::new(self.get_globals()).nf_iter().for_each(|it| {
-                eprintln!(
-                    "Prev:{:?}\nCur:{:?}\n------------------------------------------",
-                    it.get_prev(),
-                    it.get_cur()
-                );
-            });
-
-            // FreeList::new(self.get_globals())
-            // .nf_iter()
-            // .for_each(|x| eprintln!("{x:?}"));
-            panic!(
-                " \n\n===> Dellocation Request for: {val:?}\n Globals: {:?}\n",
+            unreachable!(
+                "Shouldnt have hit this branch. Start Debugging🤕!!\n ===> Dellocation Request for: {val:?}\n Globals: {:?}\n",
                 self.get_globals(),
             );
         }
@@ -475,9 +469,7 @@ impl NfAllocator {
 
                     // last_free_block is always something in which get_next is valid
                     // If the first block we encounter itself is CAML_WHITE, the get_next call in
-                    // B1 branch in nf_merge is valid and we won't ever get inside it because the
-                    // last_free_block is currently nf_head, whose next value is first free list
-                    // entry and wont ever be adjacent to next_in_mem of cur_val
+                    // B1 branch in nf_merge is valid
                     sweeped_wsz += whsize_wosize(cur_val.get_header().get_wosize());
                     self.nf_merge(cur_val, &mut last_empty_val, &mut last_free_block);
                 }
@@ -529,13 +521,11 @@ impl NfAllocator {
             // Change last_free_block's next correctly
             *get_next(last_free_block) = *get_next(&next_free_block);
 
-            // The nf_prev and nf_last wont ever point to nf_head because only way we get here is
-            // if our condition holds. The condition can never hold for last_free_block == nf_head
             if next_free_block == self.get_globals().nf_prev {
                 self.get_globals_mut().nf_prev = *last_free_block;
             }
             if next_free_block == self.get_globals().nf_last {
-                self.get_globals_mut().nf_last = *last_free_block;
+                self.get_globals_mut().nf_last = cur_val;
             }
         }
 
@@ -548,6 +538,9 @@ impl NfAllocator {
                 CAML_BLUE,
                 DEFAULT_TAG,
             );
+            if cur_val == self.get_globals().nf_last {
+                self.get_globals_mut().nf_last = *last_free_block;
+            }
         } else if cur_val.get_header().get_wosize() != Wsize::new(0) {
             // [B4]
             *cur_val.get_header() = Header::new(
