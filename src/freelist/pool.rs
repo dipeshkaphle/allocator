@@ -4,12 +4,12 @@ use crate::{header::Header, value::Value, word::Wsize};
 #[repr(C)]
 #[derive(Debug)]
 pub struct Pool {
-    pub(in crate::freelist) pool_wo_sz: Wsize,
-    pub(in crate::freelist) prev: *mut Pool,
-    pub(in crate::freelist) next: *mut Pool,
-    pub(in crate::freelist) filler: Value,
-    pub(in crate::freelist) hd: Header,
-    pub(in crate::freelist) first_field: Value,
+    pub(super) pool_wo_sz: Wsize,
+    pub(super) prev: *mut Pool,
+    pub(super) next: *mut Pool,
+    pub(super) filler: Value,
+    pub(super) hd: Header,
+    pub(super) first_field: Value,
 }
 
 impl Pool {
