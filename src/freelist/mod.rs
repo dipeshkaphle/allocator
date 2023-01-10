@@ -9,7 +9,7 @@ mod tests {
         colors::{CAML_BLACK, CAML_BLUE, CAML_WHITE},
         freelist::pool::Pool,
         header::Header,
-        hp_val, pool_val,
+        pool_val,
         utils::{self, field_val, whsize_wosize},
         val_hp,
         value::Value,

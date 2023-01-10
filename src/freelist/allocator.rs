@@ -2,15 +2,12 @@ use std::alloc::Layout;
 
 use crate::{
     bp_val,
-    colors::{CAML_BLACK, CAML_BLUE, CAML_GRAY, CAML_WHITE},
+    colors::{CAML_BLACK, CAML_BLUE, CAML_WHITE},
     freelist::{fl::FreeList, pool::Pool},
     hd_hp,
     header::Header,
     hp_val, pool_val,
-    utils::{
-        self, field_val, get_header_mut, get_next, get_pool_mut, next_in_mem, val_bp,
-        whsize_wosize, wosize_whsize,
-    },
+    utils::{self, field_val, get_next, get_pool_mut, val_bp, whsize_wosize, wosize_whsize},
     val_hp,
     value::{Value, VAL_NULL},
     word::Wsize,

@@ -28,10 +28,6 @@ impl Value {
     pub fn get_next_from_size(&self) -> Value {
         next_in_mem(self)
     }
-
-    pub fn get_bp(&self) -> *mut u8 {
-        bp_val!(*self)
-    }
 }
 
 impl Debug for Value {

@@ -1,9 +1,4 @@
-use crate::{
-    colors::{CAML_BLACK, CAML_BLUE, CAML_GRAY, CAML_WHITE},
-    header::Header,
-    value::Value,
-    word::Wsize,
-};
+use crate::{header::Header, value::Value, word::Wsize};
 
 // Pool is a circular linked list(Doubly Linked List)
 #[repr(C)]
@@ -32,14 +27,8 @@ impl Pool {
             (*left).next = right;
         }
     }
-    pub fn get_next_mut_ref(&mut self) -> &mut Pool {
-        unsafe { &mut *self.next }
-    }
     pub fn get_next_raw(&self) -> *mut Pool {
         self.next
-    }
-    pub fn get_prev_mut_ref(&mut self) -> &mut Pool {
-        unsafe { &mut *self.prev }
     }
     pub fn get_prev_raw(&self) -> *mut Pool {
         self.prev
@@ -48,15 +37,8 @@ impl Pool {
     pub fn get_next_raw_from_raw(ptr: &*mut Pool) -> *mut Pool {
         unsafe { (**ptr).get_next_raw() }
     }
-    pub fn get_next_mut_ref_from_raw(ptr: &mut *mut Pool) -> &mut Pool {
-        unsafe { (**ptr).get_next_mut_ref() }
-    }
-
     pub fn get_prev_raw_from_raw(ptr: &*mut Pool) -> *mut Pool {
         unsafe { (**ptr).get_prev_raw() }
-    }
-    pub fn get_prev_mut_ref_from_raw(ptr: &mut *mut Pool) -> &mut Pool {
-        unsafe { (**ptr).get_prev_mut_ref() }
     }
 }
 

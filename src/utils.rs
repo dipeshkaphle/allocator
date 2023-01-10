@@ -66,11 +66,6 @@ pub fn get_layout_and_actual_expansion_size(mut request_wo_sz: Wsize) -> (Layout
 }
 
 #[inline(always)]
-pub fn get_header_mut(ptr: &mut *mut u8) -> &mut Header {
-    unsafe { &mut *(*ptr as *mut Header) }
-}
-
-#[inline(always)]
 pub fn get_pool_mut(ptr: &mut *mut u8) -> &mut Pool {
     unsafe { &mut *(*ptr as *mut Pool) }
 }
@@ -170,15 +165,13 @@ pub fn field_val(val: Value, index: isize) -> Value {
 
 #[cfg(not(feature = "no_merge"))]
 pub fn try_merge(prev: Value, cur: Value) -> bool {
-    use crate::{colors::CAML_BLUE, DEFAULT_TAG};
-
     let prev_wosz = prev.get_header().get_wosize();
     let prev_next_val = field_val(prev, (*prev_wosz.get_val()) as _);
     if prev_next_val == field_val(cur, -1) {
         *prev.get_header() = Header::new(
             *prev_wosz.get_val() + whsize_wosize(cur.get_header().get_wosize()).get_val(),
             CAML_BLUE,
-            DEFAULT_TAG,
+            crate::DEFAULT_TAG,
         );
         *get_next(&prev) = *get_next(&cur);
         true
