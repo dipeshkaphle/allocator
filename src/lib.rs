@@ -20,7 +20,6 @@ static mut MEM_RANGES: Vec<(usize, usize)> = vec![];
 #[no_mangle]
 pub extern "C" fn alloc(wo_sz: std::ffi::c_ulonglong) -> *mut u8 {
     let mut mem = get_global_allocator().nf_allocate(Wsize::new(wo_sz as usize));
-    // get_global_allocator().get_globals().
 
     #[cfg(feature = "check_invariants")]
     get_global_allocator().verify_nf_last_invariant();
@@ -99,27 +98,27 @@ mod tests {
         assert_ne!(allocd_mem1, std::ptr::null_mut());
         // traverse_fl(|v| println!("{:?}", v));
         assert_eq!(
-            FreeList::new(get_global_allocator().get_globals())
+            FreeList::new(get_global_allocator().get_globals_mut())
                 .nf_iter()
                 .count(),
             1
         );
 
-        let total_sz_after_1_alloc: usize = FreeList::new(get_global_allocator().get_globals())
+        let total_sz_after_1_alloc: usize = FreeList::new(get_global_allocator().get_globals_mut())
             .nf_iter()
             .map(|v| *whsize_wosize(v.get_cur().get_header().get_wosize()).get_val())
             .sum();
 
         // Still 1, because we caused a split in free list
         assert_eq!(
-            FreeList::new(get_global_allocator().get_globals())
+            FreeList::new(get_global_allocator().get_globals_mut())
                 .nf_iter()
                 .count(),
             1
         );
 
         assert_eq!(
-            FreeList::new(get_global_allocator().get_globals())
+            FreeList::new(get_global_allocator().get_globals_mut())
                 .nf_iter()
                 .map(|v| *whsize_wosize(v.get_cur().get_header().get_wosize()).get_val())
                 .sum::<usize>(),
@@ -132,7 +131,7 @@ mod tests {
         assert_ne!(allocd_mem2, std::ptr::null_mut());
 
         assert_eq!(
-            FreeList::new(get_global_allocator().get_globals())
+            FreeList::new(get_global_allocator().get_globals_mut())
                 .nf_iter()
                 .map(|v| *whsize_wosize(v.get_cur().get_header().get_wosize()).get_val())
                 .sum::<usize>(),
@@ -145,7 +144,7 @@ mod tests {
 
         // The allocd_mem2 is missing for the merge to happen
         assert_eq!(
-            FreeList::new(get_global_allocator().get_globals())
+            FreeList::new(get_global_allocator().get_globals_mut())
                 .nf_iter()
                 .count(),
             2
@@ -155,7 +154,7 @@ mod tests {
 
         // Should be 1 now, due to merge
         assert_eq!(
-            FreeList::new(get_global_allocator().get_globals())
+            FreeList::new(get_global_allocator().get_globals_mut())
                 .nf_iter()
                 .count(),
             1

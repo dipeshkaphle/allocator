@@ -12,7 +12,7 @@ mod tests {
         pool_val,
         utils::{self, field_val, whsize_wosize},
         val_hp,
-        value::Value,
+        value::{Value, VAL_NULL},
         word::Wsize,
         DEFAULT_TAG,
     };
@@ -43,7 +43,7 @@ mod tests {
         let mut allocator = NfAllocator::new();
 
         // nothing present in freelist
-        assert!(FreeList::new(allocator.get_globals()).nf_iter().count() == 0);
+        assert!(FreeList::new(allocator.get_globals_mut()).nf_iter().count() == 0);
 
         let intended_expansion_size = Wsize::new(1024 * 1024); // Expand the heap with a chunk of size
                                                                // 1024*1024 words i.e (1024**2) *
@@ -63,10 +63,13 @@ mod tests {
 
         let pool_leader_wsz =
             whsize_wosize(Pool::get_header_size_from_pool_wo_sz(actual_expansion_size));
-        assert_eq!(allocator.get_globals().cur_wsz, pool_leader_wsz,);
+        assert_eq!(allocator.get_globals_mut().cur_wsz, pool_leader_wsz,);
 
         // 1 chunk is present in freelist after expansion
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            1
+        );
 
         // 1 pool block has been added as well
         assert_eq!(allocator.get_pool_iter().count(), 1);
@@ -86,7 +89,7 @@ mod tests {
         let to_be_freed = allocations.get_mut(0).unwrap().take().unwrap();
         assert!(allocations.get(0).unwrap().is_none());
 
-        let allocatable_memory_left = FreeList::new(allocator.get_globals())
+        let allocatable_memory_left = FreeList::new(allocator.get_globals_mut())
             .nf_iter()
             .fold(Wsize::new(0), |acc, x| {
                 acc + x.get_cur().get_header().get_wosize()
@@ -110,14 +113,17 @@ mod tests {
         // This must've made the free list empty
         assert_eq!(allocator.get_globals().cur_wsz, Wsize::new(0));
         assert_eq!(
-            FreeList::new(allocator.get_globals())
+            FreeList::new(allocator.get_globals_mut())
                 .nf_iter()
                 .fold(Wsize::new(0), |acc, x| {
                     acc + x.get_cur().get_header().get_wosize()
                 }),
             Wsize::new(0)
         );
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 0);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            0
+        );
 
         // Freeing the first allocation
         let to_be_freed_header = val_hp!(to_be_freed).get_header().clone();
@@ -130,7 +136,7 @@ mod tests {
 
         let allocatable_memory_left = to_be_freed_header.get_wosize();
 
-        FreeList::new(allocator.get_globals()).nf_iter().count();
+        FreeList::new(allocator.get_globals_mut()).nf_iter().count();
 
         // Allocating exactly allocatable_memory_left will again empty the freelist
         let hp = allocator.nf_allocate(allocatable_memory_left);
@@ -138,7 +144,7 @@ mod tests {
         assert_ne!(hp, std::ptr::null_mut());
         assert_eq!(allocator.get_globals().cur_wsz, Wsize::new(0));
         assert_eq!(
-            FreeList::new(allocator.get_globals())
+            FreeList::new(allocator.get_globals_mut())
                 .nf_iter()
                 .fold(Wsize::new(0), |acc, x| {
                     acc + x.get_cur().get_header().get_wosize()
@@ -151,7 +157,10 @@ mod tests {
 
         allocator.nf_expand_heap(intended_expansion_size);
 
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            1
+        );
         assert_eq!(allocator.get_globals().cur_wsz, pool_leader_wsz);
 
         assert_eq!(allocator.get_pool_iter().count(), 2);
@@ -165,7 +174,7 @@ mod tests {
             freelist_node_count += 1;
             allocator.nf_expand_heap(intended_expansion_size);
             assert_eq!(
-                FreeList::new(allocator.get_globals()).nf_iter().count(),
+                FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
                 freelist_node_count
             );
             assert_eq!(allocator.get_globals().cur_wsz, pool_leader_wsz * (i + 1));
@@ -207,7 +216,10 @@ mod tests {
             .map(|x| whsize_wosize(*x))
             .fold(Wsize::new(0), |acc, e| acc + e);
 
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            1
+        );
         assert_eq!(
             allocator.get_globals().cur_wsz,
             initial_cur_wsz - wsz_not_in_fl
@@ -224,7 +236,10 @@ mod tests {
 
         allocator.nf_sweep();
 
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            1
+        );
         assert_eq!(allocator.get_globals().cur_wsz, initial_cur_wsz);
 
         // Preparing for 2nd sweep
@@ -243,7 +258,10 @@ mod tests {
             allocated_values.push(val_hp!(allocator.nf_allocate(*sz)));
         }
 
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            1
+        );
         // we'll mark two values as unreachable
         //
         // allocated_values[0] and allocated_values[2]
@@ -258,7 +276,10 @@ mod tests {
 
         allocator.nf_sweep();
 
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 3);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            3
+        );
         assert_eq!(
             allocator.get_globals().cur_wsz,
             initial_cur_wsz
@@ -286,14 +307,17 @@ mod tests {
 
         allocator.nf_sweep();
 
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 2);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            2
+        );
         assert_eq!(
             allocator.get_globals().cur_wsz,
             initial_cur_wsz - whsize_wosize(*allocation_sizes.get(3).unwrap())
         );
 
         let mut last = Value(0);
-        for ele in FreeList::new(allocator.get_globals()).nf_iter() {
+        for ele in FreeList::new(allocator.get_globals_mut()).nf_iter() {
             last = ele.get_cur();
         }
 
@@ -302,10 +326,16 @@ mod tests {
         allocator.get_globals_mut().nf_last = last;
 
         allocator.nf_sweep();
+        assert_eq!(allocator.get_globals().nf_last, VAL_NULL);
+        // nf_last will be fixed to correct value when we actually need it
 
-        assert_eq!(FreeList::new(allocator.get_globals()).nf_iter().count(), 1);
+        assert_eq!(
+            FreeList::new(allocator.get_globals_mut()).nf_iter().count(),
+            1
+        );
+
         assert_eq!(allocator.get_globals().cur_wsz, initial_cur_wsz);
-        let only_val_in_fl = FreeList::new(allocator.get_globals())
+        let only_val_in_fl = FreeList::new(allocator.get_globals_mut())
             .nf_iter()
             .next()
             .unwrap()

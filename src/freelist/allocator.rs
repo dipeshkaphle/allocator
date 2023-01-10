@@ -177,7 +177,7 @@ impl NfAllocator {
 
     pub fn nf_allocate(&mut self, wo_sz: Wsize) -> *mut Header {
         assert!(*wo_sz.get_val() >= 1);
-        let it = FreeList::new(self.get_globals()).find_next(wo_sz);
+        let it = FreeList::new(self.get_globals_mut()).find_next(wo_sz);
         match it {
             None => VAL_NULL.0 as *mut Header,
             Some(it) => {
@@ -322,7 +322,7 @@ impl NfAllocator {
     }
 
     fn nf_add_block(&mut self, val: Value) {
-        let it = FreeList::new(self.get_globals())
+        let it = FreeList::new(self.get_globals_mut())
             .nf_iter()
             .find(|e| e.get_cur() > val && e.get_prev() < val);
         self.get_globals_mut().cur_wsz += whsize_wosize(val.get_header().get_wosize());
@@ -342,16 +342,17 @@ impl NfAllocator {
     #[cfg(feature = "check_invariants")]
     pub fn verify_nf_last_invariant(&mut self) {
         assert!(
-            FreeList::new(self.get_globals())
+            FreeList::new(self.get_globals_mut())
                 .nf_iter()
                 .all(|it| it.get_prev() < it.get_cur()),
             "Sorted free list invariant broken"
         );
 
-        let largest_cur_val = FreeList::new(self.get_globals())
+        let largest_cur_val = FreeList::new(self.get_globals_mut())
             .nf_iter()
             .fold(Value(0), |acc, e| Value(acc.0.max(e.get_cur().0)));
 
+        // This is only valid because of the iteration done right before though
         let nf_last = get_global_allocator().get_globals().nf_last;
         let nf_head = get_global_allocator().get_globals().nf_head;
         assert!(
@@ -414,7 +415,7 @@ impl NfAllocator {
             return;
         }
 
-        if let Some(it) = FreeList::new(self.get_globals())
+        if let Some(it) = FreeList::new(self.get_globals_mut())
             .nf_iter()
             .find(|it| it.get_cur() > val && it.get_prev() < val)
         {
@@ -524,9 +525,7 @@ impl NfAllocator {
             if next_free_block == self.get_globals().nf_prev {
                 self.get_globals_mut().nf_prev = *last_free_block;
             }
-            if next_free_block == self.get_globals().nf_last {
-                self.get_globals_mut().nf_last = cur_val;
-            }
+            self.get_globals_mut().nf_last = VAL_NULL;
         }
 
         // [B3]
@@ -538,9 +537,6 @@ impl NfAllocator {
                 CAML_BLUE,
                 DEFAULT_TAG,
             );
-            if cur_val == self.get_globals().nf_last {
-                self.get_globals_mut().nf_last = *last_free_block;
-            }
         } else if cur_val.get_header().get_wosize() != Wsize::new(0) {
             // [B4]
             *cur_val.get_header() = Header::new(
